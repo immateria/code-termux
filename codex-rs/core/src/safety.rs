@@ -88,6 +88,9 @@ pub fn assess_patch_safety(
 pub fn get_platform_sandbox(windows_sandbox_enabled: bool) -> Option<SandboxType> {
     if cfg!(target_os = "macos") {
         Some(SandboxType::MacosSeatbelt)
+    } else if cfg!(target_os = "android") {
+        // Android/Termux does not support landlock/seccomp sandbox
+        None
     } else if cfg!(target_os = "linux") {
         Some(SandboxType::LinuxSeccomp)
     } else if cfg!(target_os = "windows") {

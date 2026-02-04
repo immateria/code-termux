@@ -1,0 +1,731 @@
+#!/usr/bin/env zsh
+# Fast build script for local development - optimized for speed
+# Zsh-native rewrite with improved error handling and performance
+
+emulate -L zsh
+setopt err_exit pipe_fail extended_glob
+
+# Usage banner
+function usage {
+  print -r "Usage: ./build-fast.zsh [env flags]
+
+Environment flags:
+  PROFILE=dev-fast|dev|release-prod   Build profile (default: dev-fast)
+  TRACE_BUILD=1                       Print toolchain/env and artifact SHA
+  KEEP_ENV=0                          Sanitize env for reproducible builds (default skips)
+  DETERMINISTIC=1                     Add -C debuginfo=0; promotes to release-prod unless DETERMINISTIC_FORCE_RELEASE=0
+  DETERMINISTIC_FORCE_RELEASE=0|1     Keep dev-fast (0) or switch to release-prod (1, default)
+  DETERMINISTIC_NO_UUID=1             macOS only: strip LC_UUID on final executables
+  BUILD_FAST_BINS=\"code code-tui\"     Override bins to build (space or comma separated)
+  --workspace codex|code|both         Select workspace to build (default: code)
+
+Examples:
+  ./build-fast.zsh
+  TRACE_BUILD=1 ./build-fast.zsh
+  DETERMINISTIC=1 DETERMINISTIC_FORCE_RELEASE=0 ./build-fast.zsh
+  DETERMINISTIC=1 DETERMINISTIC_NO_UUID=1 ./build-fast.zsh
+  ./build-fast.zsh run
+  ./build-fast.zsh perf
+  ./build-fast.zsh perf run"
+}
+
+# Fast string trimming using parameter expansion
+function trim {
+  typeset value=$1
+  value=${value##[[:space:]]#}
+  value=${value%%[[:space:]]#}
+  print -rn -- $value
+}
+
+# Hash string using available tools
+function hash_string {
+  typeset input=$1
+  if (( $+commands[shasum] )); then
+    print -rn -- $input | shasum -a 256 | read sha rest
+    print -rn -- $sha
+  elif (( $+commands[sha256sum] )); then
+    print -rn -- $input | sha256sum | read sha rest
+    print -rn -- $sha
+  else
+    print -rn -- $input | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())'
+  fi
+}
+
+# Sanitize cache key for filesystem safety
+function sanitize_cache_key {
+  typeset raw=$1
+  # Replace unsupported characters
+  raw=${raw//[^A-Za-z0-9._-]/-}
+  # Collapse repeated dashes
+  while [[ $raw == *--* ]]; do
+    raw=${raw//--/-}
+  done
+  # Trim leading/trailing dashes
+  raw=${raw##-#}
+  raw=${raw%%-#}
+  # Fallback if empty
+  [[ -z $raw ]] && raw="default"
+  # Prevent overly long names
+  [[ ${#raw} -gt 120 ]] && raw=${raw[1,120]}
+  print -rn -- $raw
+}
+
+# Check if binary is in target list
+function bin_requested {
+  typeset needle=$1
+  for candidate in $TARGET_BINS; do
+    [[ $candidate == $needle ]] && return 0
+  done
+  return 1
+}
+
+# Resolve binary paths based on profile
+function resolve_bin_path {
+  case $PROFILE in
+    dev-fast) BIN_SUBDIR="dev-fast" ;;
+    dev)      BIN_SUBDIR="debug" ;;
+    *)        BIN_SUBDIR=$PROFILE ;;
+  esac
+
+  typeset target_root=${CARGO_TARGET_DIR:-${REPO_ROOT}/${WORKSPACE_DIR}/target}
+  
+  # Make absolute if relative
+  if [[ $target_root != /* ]]; then
+    target_root=${target_root:a}
+  fi
+
+  TARGET_DIR_ABS=$target_root
+  BIN_CARGO_FILENAME=$CRATE_PREFIX
+  BIN_FILENAME=$CRATE_PREFIX
+  [[ $PROFILE == perf ]] && BIN_FILENAME="${CRATE_PREFIX}-perf"
+  
+  BIN_SUBPATH="${BIN_SUBDIR}/${BIN_FILENAME}"
+  BIN_CARGO_SUBPATH="${BIN_SUBDIR}/${BIN_CARGO_FILENAME}"
+  BIN_PATH="${TARGET_DIR_ABS}/${BIN_SUBPATH}"
+  BIN_CARGO_PATH="${TARGET_DIR_ABS}/${BIN_CARGO_SUBPATH}"
+  BIN_LINK_PATH="./target/${BIN_SUBPATH}"
+
+  if [[ -n $REPO_TARGET_ABS && $TARGET_DIR_ABS == $REPO_TARGET_ABS ]]; then
+    BIN_DISPLAY_PATH="./${WORKSPACE_DIR}/target/${BIN_SUBPATH}"
+  else
+    BIN_DISPLAY_PATH=$BIN_PATH
+  fi
+}
+
+# Parse arguments
+[[ ${1:-} == (-h|--help) ]] && { usage; exit 0 }
+
+integer RUN_AFTER_BUILD=0
+typeset ARG_PROFILE=""
+typeset WORKSPACE_CHOICE=${WORKSPACE:-}
+typeset -a PASSTHROUGH_ARGS
+
+while (( $# > 0 )); do
+  case $1 in
+    run)
+      RUN_AFTER_BUILD=1
+      PASSTHROUGH_ARGS+=($1)
+      ;;
+    --workspace)
+      shift || { print -u2 "Error: --workspace requires a value."; usage; exit 1 }
+      WORKSPACE_CHOICE=$1
+      ;;
+    --workspace=*)
+      WORKSPACE_CHOICE=${1#*=}
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      if [[ -n $ARG_PROFILE ]]; then
+        print -u2 "Error: Multiple profile arguments provided ('${ARG_PROFILE}' and '$1')."
+        usage
+        exit 1
+      fi
+      ARG_PROFILE=$1
+      PASSTHROUGH_ARGS+=($1)
+      ;;
+  esac
+  shift
+done
+
+[[ -z $WORKSPACE_CHOICE ]] && WORKSPACE_CHOICE="code"
+[[ $ARG_PROFILE == pref ]] && ARG_PROFILE="perf"
+
+# Resolve repository paths
+typeset SCRIPT_DIR=${0:A:h}
+typeset CALLER_CWD
+
+if [[ -n ${CODE_CALLER_CWD:-} ]]; then
+  CALLER_CWD=${CODE_CALLER_CWD:a} || {
+    print -u2 "Error: CODE_CALLER_CWD is not a valid directory: ${CODE_CALLER_CWD}"
+    exit 1
+  }
+else
+  CALLER_CWD=$PWD
+fi
+
+typeset REPO_NAME
+if [[ $SCRIPT_DIR == */.code/working/*/branches/* ]]; then
+  typeset WORKTREE_PARENT=${SCRIPT_DIR%/branches/*}
+  REPO_NAME=${WORKTREE_PARENT:t}
+else
+  REPO_NAME=${SCRIPT_DIR:t}
+fi
+
+typeset REPO_ROOT=$SCRIPT_DIR
+
+# Guard against codex path dependencies
+if [[ ${BUILD_FAST_SKIP_CODEX_GUARD:-0} != 1 ]]; then
+  print "Running codex path dependency guard..."
+  (
+    cd $REPO_ROOT
+    scripts/check-codex-path-deps.sh
+  )
+fi
+
+# Handle --workspace both
+if [[ $WORKSPACE_CHOICE == both ]]; then
+  if (( RUN_AFTER_BUILD )); then
+    print -u2 "Error: --workspace both cannot be combined with 'run'."
+    exit 1
+  fi
+  for ws in codex code; do
+    WORKSPACE=$ws $0 $PASSTHROUGH_ARGS --workspace $ws
+  done
+  exit 0
+fi
+
+# Determine cache home
+typeset CACHE_HOME
+if [[ -n ${CODE_HOME:-} ]]; then
+  CACHE_HOME=${CODE_HOME%/}
+elif [[ -n ${CODEX_HOME:-} ]]; then
+  CACHE_HOME=${CODEX_HOME%/}
+else
+  if [[ -d /mnt/data && -w /mnt/data ]]; then
+    CACHE_HOME="/mnt/data/.code"
+  else
+    CACHE_HOME="${REPO_ROOT}/.code"
+  fi
+fi
+
+# Make absolute
+[[ $CACHE_HOME != /* ]] && CACHE_HOME="${REPO_ROOT}/${CACHE_HOME#./}"
+
+# Select workspace
+typeset WORKSPACE_DIR CRATE_PREFIX
+case $WORKSPACE_CHOICE in
+  codex|codex-rs)
+    WORKSPACE_DIR="codex-rs"
+    CRATE_PREFIX="codex"
+    ;;
+  code|code-rs)
+    WORKSPACE_DIR="code-rs"
+    CRATE_PREFIX="code"
+    ;;
+  *)
+    print -u2 "Error: Unknown workspace '${WORKSPACE_CHOICE}'. Use codex, code, or both."
+    exit 1
+    ;;
+esac
+
+typeset WORKSPACE_PATH="${SCRIPT_DIR}/${WORKSPACE_DIR}"
+[[ ! -d $WORKSPACE_PATH ]] && {
+  print -u2 "Error: Workspace directory '${WORKSPACE_PATH}' not found."
+  exit 1
+}
+
+typeset TARGET_CACHE_ROOT="${CACHE_HOME}/working/_target-cache/${REPO_NAME}"
+
+# Change to workspace
+cd $WORKSPACE_PATH
+
+# Determine cache key
+typeset WORKTREE_ROOT=${$(git rev-parse --show-toplevel 2>/dev/null):-$PWD}
+typeset CACHE_KEY CACHE_KEY_SOURCE
+
+if [[ -z ${BUILD_FAST_CACHE_KEY:-} ]]; then
+  if git rev-parse --is-inside-work-tree &>/dev/null; then
+    typeset BRANCH_NAME_RAW=${$(git rev-parse --abbrev-ref HEAD 2>/dev/null):-HEAD}
+    if [[ $BRANCH_NAME_RAW == HEAD ]]; then
+      typeset short_sha=${$(git rev-parse --short HEAD 2>/dev/null):-$(date +%Y%m%d%H%M%S)}
+      BRANCH_NAME_RAW="detached-${short_sha}"
+    fi
+  else
+    BRANCH_NAME_RAW="unknown"
+  fi
+  
+  typeset BRANCH_HASH=$(hash_string $BRANCH_NAME_RAW)
+  typeset BRANCH_HASH_SHORT=${BRANCH_HASH[1,12]}
+  typeset WORKTREE_HASH=$(hash_string $WORKTREE_ROOT)
+  typeset WORKTREE_HASH_SHORT=${WORKTREE_HASH[1,12]}
+  typeset CACHE_KEY_RAW="${BRANCH_NAME_RAW}-${BRANCH_HASH_SHORT}-${WORKTREE_HASH_SHORT}"
+  CACHE_KEY_SOURCE="branch/worktree"
+else
+  CACHE_KEY_RAW=$BUILD_FAST_CACHE_KEY
+  CACHE_KEY_SOURCE="override"
+fi
+
+CACHE_KEY=$(sanitize_cache_key $CACHE_KEY_RAW)
+[[ -z $CACHE_KEY ]] && CACHE_KEY="default"
+
+typeset TARGET_CACHE_DIR="${TARGET_CACHE_ROOT}/${CACHE_KEY}/${WORKSPACE_DIR}"
+
+if [[ -z ${CARGO_TARGET_DIR:-} ]]; then
+  typeset TARGET_CACHE_DIR_ABS=$TARGET_CACHE_DIR
+  [[ $TARGET_CACHE_DIR_ABS != /* ]] && TARGET_CACHE_DIR_ABS="${REPO_ROOT}/${TARGET_CACHE_DIR_ABS#./}"
+  mkdir -p $TARGET_CACHE_DIR_ABS 2>/dev/null
+  export CARGO_TARGET_DIR=$TARGET_CACHE_DIR_ABS
+else
+  TARGET_CACHE_DIR_ABS=$CARGO_TARGET_DIR
+fi
+
+print "Cache bucket: ${CACHE_KEY} (${CACHE_KEY_SOURCE})"
+
+# Extract package names using zsh built-ins
+typeset CLI_PACKAGE=$(sed -En 's/^name[[:space:]]*=[[:space:]]*"(.*)"/\1/p' cli/Cargo.toml | head -1)
+typeset TUI_PACKAGE=$(sed -En 's/^name[[:space:]]*=[[:space:]]*"(.*)"/\1/p' tui/Cargo.toml | head -1)
+typeset EXEC_PACKAGE=$(sed -En 's/^name[[:space:]]*=[[:space:]]*"(.*)"/\1/p' exec/Cargo.toml | head -1)
+CRATE_PREFIX=${CLI_PACKAGE%%-*}
+
+typeset EXEC_BIN=$(awk 'BEGIN{inbin=0} /^\[\[bin\]\]/{inbin=1; next} inbin && /^name[[:space:]]*=/{gsub(/.*"/,"",$0); gsub(/"/,"",$0); print; exit}' exec/Cargo.toml)
+[[ -z $EXEC_BIN ]] && EXEC_BIN=$EXEC_PACKAGE
+
+# Determine target binaries
+typeset -a TARGET_BINS
+typeset bin_candidate
+if [[ -n ${BUILD_FAST_BINS:-} ]]; then
+  for raw_bin in ${(s:,:)BUILD_FAST_BINS} ${=BUILD_FAST_BINS}; do
+   		bin_candidate=$(trim $raw_bin)
+    [[ -n $bin_candidate ]] && TARGET_BINS+=($bin_candidate)
+  done
+fi
+(( ${#TARGET_BINS} == 0 )) && TARGET_BINS=($CRATE_PREFIX)
+
+# Ensure primary binary is first
+integer PRIMARY_PRESENT=0
+for candidate in $TARGET_BINS; do
+  [[ $candidate == $CRATE_PREFIX ]] && { PRIMARY_PRESENT=1; break }
+done
+(( ! PRIMARY_PRESENT )) && TARGET_BINS=($CRATE_PREFIX $TARGET_BINS)
+typeset PRIMARY_BIN=$TARGET_BINS[1]
+
+# Environment handling
+integer KEEP_ENV=${KEEP_ENV:-1}
+integer PROFILE_ENV_SUPPLIED=0
+typeset PROFILE_VALUE
+
+if [[ -n ${PROFILE+x} ]]; then
+  PROFILE_ENV_SUPPLIED=1
+  PROFILE_VALUE=$PROFILE
+else
+  PROFILE_VALUE="dev-fast"
+fi
+
+[[ -n $ARG_PROFILE ]] && PROFILE_VALUE=$ARG_PROFILE
+
+integer PROFILE_EXPLICIT=0
+(( PROFILE_ENV_SUPPLIED || ${#ARG_PROFILE} > 0 )) && PROFILE_EXPLICIT=1
+
+typeset PROFILE=$PROFILE_VALUE
+
+# Deterministic build mode
+if [[ ${DETERMINISTIC:-} == 1 ]]; then
+  print "Deterministic build: enabled"
+  typeset DET_FORCE_REL=${DETERMINISTIC_FORCE_RELEASE:-1}
+  if [[ $PROFILE == dev-fast && $DET_FORCE_REL == 1 ]]; then
+    PROFILE="release-prod"
+    print "Deterministic build: switching profile to ${PROFILE}"
+  elif [[ $PROFILE == dev-fast ]]; then
+    print "Deterministic build: keeping profile ${PROFILE} (DETERMINISTIC_FORCE_RELEASE=0)"
+  fi
+  
+  if (( $+commands[git] )) && git -C $REPO_ROOT rev-parse --is-inside-work-tree &>/dev/null; then
+    export SOURCE_DATE_EPOCH=$(git -C $REPO_ROOT log -1 --pretty=%ct 2>/dev/null || true)
+  fi
+fi
+
+typeset ORIGINAL_PROFILE=$PROFILE
+if [[ $PROFILE != (dev|release) ]]; then
+  if ! grep -qF "[profile.${PROFILE}]" Cargo.toml 2>/dev/null; then
+    case $PROFILE in
+      dev-fast)      PROFILE="dev" ;;
+      perf|release-prod) PROFILE="release" ;;
+      *)             PROFILE="dev" ;;
+    esac
+    [[ $ORIGINAL_PROFILE != $PROFILE ]] && print "Profile ${ORIGINAL_PROFILE} not defined in ${WORKSPACE_DIR}/Cargo.toml; falling back to ${PROFILE}."
+  fi
+fi
+
+# Select cargo toolchain
+typeset USE_CARGO="cargo"
+if (( $+commands[rustup] )); then
+  typeset TOOLCHAIN=${RUSTUP_TOOLCHAIN:-}
+  
+  if [[ -z $TOOLCHAIN && -f rust-toolchain.toml ]]; then
+    TOOLCHAIN=$(sed -n 's/^channel\s*=\s*"\(.*\)"/\1/p' rust-toolchain.toml | head -1)
+  fi
+  
+  [[ -z $TOOLCHAIN ]] && TOOLCHAIN=$(rustup show active-toolchain 2>/dev/null | read tc rest && print $tc)
+  
+  if [[ -n $TOOLCHAIN ]]; then
+    if ! rustup which rustc --toolchain $TOOLCHAIN &>/dev/null; then
+      print "rustup: installing toolchain $TOOLCHAIN ..."
+      rustup toolchain install $TOOLCHAIN &>/dev/null
+    fi
+    USE_CARGO="rustup run $TOOLCHAIN cargo"
+    print "Using rustup toolchain: $TOOLCHAIN"
+    rustup run $TOOLCHAIN rustc --version 2>/dev/null || true
+  else
+    print "rustup found but no toolchain detected; using system cargo"
+  fi
+else
+  print -u2 "Error: rustup is required for consistent builds."
+  print -u2 "Please install rustup: https://rustup.rs/"
+  exit 1
+fi
+
+# Canonicalize environment
+integer CANONICAL_ENV_APPLIED=0
+if (( ! KEEP_ENV )); then
+  [[ -z ${DETERMINISTIC:-} ]] && export RUSTFLAGS=""
+  unset RUSTC_WRAPPER CARGO_BUILD_RUSTC_WRAPPER SCCACHE SCCACHE_BIN CARGO_TARGET_DIR
+  unset MACOSX_DEPLOYMENT_TARGET CARGO_PROFILE_RELEASE_LTO CARGO_PROFILE_DEV_FAST_LTO
+  unset CARGO_PROFILE_RELEASE_CODEGEN_UNITS CARGO_PROFILE_DEV_FAST_CODEGEN_UNITS
+  unset CARGO_INCREMENTAL
+  CANONICAL_ENV_APPLIED=1
+fi
+
+[[ -z ${CARGO_TARGET_DIR:-} ]] && export CARGO_TARGET_DIR=$TARGET_CACHE_DIR_ABS
+
+# Configure sccache
+if (( $+commands[sccache] )); then
+  [[ -z ${RUSTC_WRAPPER:-} ]] && export RUSTC_WRAPPER=$(whence -p sccache)
+  [[ -z ${SCCACHE_DIR:-} ]] && export SCCACHE_DIR="${CACHE_HOME}/sccache"
+  [[ -z ${SCCACHE_CACHE_SIZE:-} ]] && export SCCACHE_CACHE_SIZE="50G"
+  mkdir -p $SCCACHE_DIR 2>/dev/null
+fi
+
+# Debug symbols handling
+if [[ ${DEBUG_SYMBOLS:-} == 1 ]]; then
+  if [[ $PROFILE == perf ]]; then
+    print "Debug symbols: profile 'perf' already preserves debuginfo"
+  elif (( ! PROFILE_EXPLICIT )) && [[ $PROFILE == dev-fast ]]; then
+    print "Debug symbols requested: switching profile to perf"
+    PROFILE="perf"
+  else
+    typeset PROFILE_UPPER=${PROFILE:u:gs/-/_/}
+    typeset -g "CARGO_PROFILE_${PROFILE_UPPER}_DEBUG"=2
+    typeset -g "CARGO_PROFILE_${PROFILE_UPPER}_STRIP"=none
+    typeset -g "CARGO_PROFILE_${PROFILE_UPPER}_SPLIT_DEBUGINFO"=packed
+    export "CARGO_PROFILE_${PROFILE_UPPER}_DEBUG" "CARGO_PROFILE_${PROFILE_UPPER}_STRIP" "CARGO_PROFILE_${PROFILE_UPPER}_SPLIT_DEBUGINFO"
+    print "Debug symbols: forcing debuginfo for profile ${PROFILE}"
+  fi
+  
+  if [[ -n ${RUSTFLAGS:-} ]]; then
+    typeset CLEAN_RUSTFLAGS=${RUSTFLAGS//-C debuginfo=0/}
+    CLEAN_RUSTFLAGS=${${CLEAN_RUSTFLAGS//  / }## }
+    CLEAN_RUSTFLAGS=${CLEAN_RUSTFLAGS%% }
+    export RUSTFLAGS=$CLEAN_RUSTFLAGS
+  fi
+  
+  export CARGO_PROFILE_RELEASE_STRIP="none"
+  export CARGO_PROFILE_RELEASE_PROD_STRIP="none"
+fi
+
+print "Building ${CRATE_PREFIX} binary (${PROFILE} mode)..."
+
+# Configure Cargo directories
+if [[ ${STRICT_CARGO_HOME:-} == 1 ]]; then
+  export CARGO_HOME=${CARGO_HOME_ENFORCED:-${REPO_ROOT}/.cargo-home}
+else
+  [[ -z ${CARGO_HOME:-} ]] && export CARGO_HOME="${REPO_ROOT}/.cargo-home"
+fi
+
+[[ -z ${RUSTUP_HOME:-} ]] && export RUSTUP_HOME="${CARGO_HOME%/}/rustup"
+[[ -z ${CARGO_TARGET_DIR:-} ]] && export CARGO_TARGET_DIR="${WORKSPACE_PATH}/target"
+mkdir -p $CARGO_HOME $CARGO_TARGET_DIR 2>/dev/null
+
+mkdir -p ./target
+typeset REPO_TARGET_ABS=${${:-./target}:a}
+resolve_bin_path
+
+export CARGO_REGISTRIES_CRATES_IO_PROTOCOL="sparse"
+
+# Resolve actual cargo/rustc for fingerprinting
+typeset REAL_CARGO_BIN=$(rustup which cargo 2>/dev/null || whence -p cargo || print cargo)
+typeset REAL_RUSTC_BIN=$(rustup which rustc 2>/dev/null || whence -p rustc || print rustc)
+
+# Determine host triple
+typeset TRIPLE=$(rustup run $TOOLCHAIN rustc -vV 2>/dev/null | awk -F': ' '/^host: /{print $2}')
+if [[ -z $TRIPLE ]]; then
+  if [[ $(uname -s) == Darwin ]]; then
+    TRIPLE="$(uname -m)-apple-darwin"
+    [[ $TRIPLE == arm64-apple-darwin ]] && TRIPLE="aarch64-apple-darwin"
+  else
+    TRIPLE="unknown-unknown-unknown"
+  fi
+fi
+
+# Check Cargo.lock validity
+typeset USE_LOCKED
+if CARGO_HOME=$CARGO_HOME RUSTUP_HOME=$RUSTUP_HOME ${=USE_CARGO} metadata --locked --format-version 1 &>/dev/null; then
+  USE_LOCKED="--locked"
+else
+  print "⚠️  Warning: Cargo.lock appears out of date or inconsistent"
+  print "  This might mean:"
+  print "  • You've modified Cargo.toml dependencies"
+  print "  • You've changed workspace crate versions"
+  print "  • The lockfile is missing entries"
+  print ""
+  print "  Run 'cargo update' to update all dependencies, or"
+  print "  Run 'cargo update -p <crate-name>' to update specific crates"
+  print ""
+  print "  Continuing with unlocked build for development..."
+  print ""
+  USE_LOCKED=""
+fi
+
+# Trace mode
+if [[ ${TRACE_BUILD:-} == 1 ]]; then
+  print "--- TRACE_BUILD environment ---"
+  print "whoami: $(whoami)"
+  print "pwd: $PWD"
+  print "SHELL: ${SHELL:-}"
+  print "zsh: $(zsh --version)"
+  [[ -n ${TOOLCHAIN:-} ]] && {
+    print "TOOLCHAIN: ${TOOLCHAIN}"
+    rustup run $TOOLCHAIN rustc -vV 2>/dev/null
+    rustup run $TOOLCHAIN cargo -vV 2>/dev/null
+  }
+  print "CANONICAL_ENV_APPLIED: ${CANONICAL_ENV_APPLIED} (KEEP_ENV=${KEEP_ENV})"
+  print "Filtered env (CARGO|RUST*|PROFILE|CODE_HOME|CODEX_HOME):"
+  env | grep -E '^(CARGO|RUST|RUSTUP|PROFILE|CODE_HOME|CODEX_HOME)=' | sort
+  print "--------------------------------"
+fi
+
+# Build cache fingerprint
+typeset FPRINT_FILE="./target/${PROFILE}/.env-fingerprint"
+
+function collect_fingerprint {
+  typeset cargo_v=$(CARGO_HOME=$CARGO_HOME RUSTUP_HOME=$RUSTUP_HOME ${=USE_CARGO} -V 2>/dev/null || true)
+  typeset rustc_v=$(rustup run $TOOLCHAIN rustc -vV 2>/dev/null || true)
+  typeset host=$(print $rustc_v | awk -F': ' '/^host: /{print $2}')
+  typeset uname_srm=$(uname -srm 2>/dev/null || true)
+  
+  print "profile=${PROFILE}
+toolchain=${TOOLCHAIN:-}
+host=${host}
+cargo_bin=${REAL_CARGO_BIN}
+rustc_bin=${REAL_RUSTC_BIN}
+cargo_version=${cargo_v}
+rustc_version=${rustc_v:gs/\n/ /}
+uname=${uname_srm}
+RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-}
+CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-}
+RUSTFLAGS=${RUSTFLAGS:-}
+RUSTC_WRAPPER=${RUSTC_WRAPPER:-}
+CARGO_BUILD_RUSTC_WRAPPER=${CARGO_BUILD_RUSTC_WRAPPER:-}
+SCCACHE=${SCCACHE:-}
+SCCACHE_BIN=${SCCACHE_BIN:-}
+CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-}
+MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-}
+CODE_HOME=${CODE_HOME:-}
+CODEX_HOME=${CODEX_HOME:-}"
+}
+
+typeset NEW_FPRINT_TEXT=$(collect_fingerprint)
+typeset NEW_FPRINT_HASH=$(print -rn -- $NEW_FPRINT_TEXT | shasum -a 256 2>/dev/null | read sha rest && print $sha)
+
+integer FPRINT_CHANGED=0
+if [[ -f $FPRINT_FILE ]]; then
+  typeset OLD_FPRINT_HASH=$(sed -n 's/^HASH=//p' $FPRINT_FILE 2>/dev/null | head -1)
+  if [[ ${OLD_FPRINT_HASH:-} != $NEW_FPRINT_HASH ]]; then
+    FPRINT_CHANGED=1
+    print "⚠️  Build cache fingerprint changed since last run for profile '${PROFILE}'."
+    print "   This can trigger incremental rebuilds the first time you build."
+    if [[ ${TRACE_BUILD:-} == 1 ]]; then
+      print "--- previous fingerprint (hash: ${OLD_FPRINT_HASH:-none}) ---"
+      sed -n '1,200p' $FPRINT_FILE 2>/dev/null | sed '1d'
+      print "--------------------------------"
+      print "--- current fingerprint (hash: ${NEW_FPRINT_HASH}) ---"
+      print $NEW_FPRINT_TEXT
+      print "--------------------------------"
+    else
+      print "   Run with TRACE_BUILD=1 to see detailed differences."
+    fi
+  fi
+fi
+
+# Build
+[[ -z $EXEC_BIN ]] && EXEC_BIN="${CRATE_PREFIX}-exec"
+
+typeset -a CARGO_BIN_ARGS
+for bin in $TARGET_BINS; do
+  CARGO_BIN_ARGS+=(--bin $bin)
+done
+
+print "Building bins: ${TARGET_BINS[*]}"
+${=USE_CARGO} build ${=USE_LOCKED} --profile $PROFILE $CARGO_BIN_ARGS
+
+# Post-build handling
+if (( $? == 0 )); then
+  resolve_bin_path
+  
+  if [[ $PROFILE == perf ]]; then
+    typeset PERF_SOURCE=$BIN_CARGO_PATH
+    typeset PERF_TARGET=$BIN_PATH
+    if [[ -e $PERF_SOURCE ]]; then
+      typeset PERF_DIR=${PERF_TARGET:h}
+      mkdir -p $PERF_DIR
+      [[ -e $PERF_TARGET || -L $PERF_TARGET ]] && rm -f $PERF_TARGET
+      (
+        cd $PERF_DIR
+        ln -sf ${PERF_SOURCE:t} ${PERF_TARGET:t}
+      )
+    fi
+  fi
+  
+  print "✅ Build successful!"
+  print "Binary location: ${BIN_DISPLAY_PATH}"
+  print ""
+  
+  # Create symlinks
+  typeset release_link_target="../${BIN_SUBDIR}/${BIN_FILENAME}"
+  typeset dev_fast_link_target="../${BIN_SUBDIR}/${BIN_FILENAME}"
+  
+  typeset -a SYMLINK_PREFIXES=($CRATE_PREFIX)
+  [[ $CRATE_PREFIX == code ]] && SYMLINK_PREFIXES+=(coder)
+  
+  function create_cli_symlinks {
+    typeset cli_dir=$1
+    typeset default_target=$2
+    mkdir -p $cli_dir
+    typeset link_target=$default_target
+    [[ -n ${CLI_LINK_ABSOLUTE:-} ]] && link_target=$CLI_LINK_ABSOLUTE
+    for PREFIX in $SYMLINK_PREFIXES; do
+      typeset dest="${cli_dir}/${PREFIX}-${TRIPLE}"
+      [[ -e $dest ]] && rm -f $dest
+      ln -sf $link_target $dest
+    done
+    for PREFIX in $SYMLINK_PREFIXES; do
+      typeset dest="${cli_dir}/${PREFIX}-aarch64-apple-darwin"
+      [[ -e $dest ]] && rm -f $dest
+      ln -sf $link_target $dest
+    done
+  }
+  
+  typeset CLI_TARGET_CODE="../../target/${BIN_SUBDIR}/${BIN_FILENAME}"
+  typeset CLI_TARGET_CODEX="../../${WORKSPACE_DIR}/target/${BIN_SUBDIR}/${BIN_FILENAME}"
+  typeset CLI_LINK_ABSOLUTE=""
+  
+  if [[ $TARGET_DIR_ABS != $REPO_TARGET_ABS ]]; then
+    release_link_target=$BIN_PATH
+    dev_fast_link_target=$BIN_PATH
+    CLI_LINK_ABSOLUTE=$BIN_PATH
+    
+    if [[ -n ${BIN_LINK_PATH:-} ]]; then
+      mkdir -p ${BIN_LINK_PATH:h}
+      [[ -e $BIN_LINK_PATH ]] && rm -f $BIN_LINK_PATH
+      ln -sf $BIN_PATH $BIN_LINK_PATH
+    fi
+  fi
+  
+  mkdir -p ./target/release
+  [[ -e ./target/release/$CRATE_PREFIX ]] && rm -f ./target/release/$CRATE_PREFIX
+  ln -sf $release_link_target ./target/release/$CRATE_PREFIX
+  
+  [[ -d ../codex-cli/bin ]] && create_cli_symlinks ../codex-cli/bin $CLI_TARGET_CODEX
+  [[ -d ./code-cli/bin ]] && create_cli_symlinks ./code-cli/bin $CLI_TARGET_CODE
+  
+  typeset BIN_DIR="./bin"
+  mkdir -p $BIN_DIR
+  typeset BIN_DIR_ABS=${BIN_DIR:a}
+  for BIN_NAME in $TARGET_BINS; do
+    typeset BIN_TARGET_PATH="${TARGET_DIR_ABS}/${BIN_SUBDIR}/${BIN_NAME}"
+    if [[ -e $BIN_TARGET_PATH ]]; then
+      typeset TMP_BIN_PATH="${BIN_DIR}/${BIN_NAME}.tmp.$$"
+      rm -f $TMP_BIN_PATH 2>/dev/null
+      cp -f $BIN_TARGET_PATH $TMP_BIN_PATH
+      mv -f $TMP_BIN_PATH ${BIN_DIR}/${BIN_NAME}
+      chmod +x ${BIN_DIR}/${BIN_NAME} 2>/dev/null
+    fi
+  done
+  typeset RUN_BIN_PATH="${BIN_DIR_ABS}/${PRIMARY_BIN}"
+  
+  if [[ $PROFILE != dev-fast ]]; then
+    mkdir -p ./target/dev-fast
+    [[ -e ./target/dev-fast/$CRATE_PREFIX ]] && rm -f ./target/dev-fast/$CRATE_PREFIX
+    ln -sf $dev_fast_link_target ./target/dev-fast/$CRATE_PREFIX
+  fi
+  
+  # Optional deterministic post-link
+  if [[ ${DETERMINISTIC_NO_UUID:-} == 1 && $(uname -s) == Darwin ]]; then
+    print "Deterministic post-link: removing LC_UUID from executables"
+    bin_requested $CRATE_PREFIX && ${=USE_CARGO} rustc ${=USE_LOCKED} --profile $PROFILE -p $CLI_PACKAGE --bin $CRATE_PREFIX -- -C link-arg=-Wl,-no_uuid 2>/dev/null
+    bin_requested ${CRATE_PREFIX}-tui && ${=USE_CARGO} rustc ${=USE_LOCKED} --profile $PROFILE -p $TUI_PACKAGE --bin ${CRATE_PREFIX}-tui -- -C link-arg=-Wl,-no_uuid 2>/dev/null
+    bin_requested $EXEC_BIN && ${=USE_CARGO} rustc ${=USE_LOCKED} --profile $PROFILE -p $EXEC_PACKAGE --bin $EXEC_BIN -- -C link-arg=-Wl,-no_uuid 2>/dev/null
+  fi
+  
+  # Compute SHA256
+  typeset ABS_BIN_PATH=${BIN_PATH:a}
+  typeset BIN_SHA=""
+  
+  if [[ -e $ABS_BIN_PATH ]]; then
+    if (( $+commands[shasum] )); then
+      BIN_SHA=$(shasum -a 256 $ABS_BIN_PATH | read sha rest && print $sha)
+    elif (( $+commands[sha256sum] )); then
+      BIN_SHA=$(sha256sum $ABS_BIN_PATH | read sha rest && print $sha)
+    fi
+  fi
+  
+  if [[ -n $BIN_SHA ]]; then
+    typeset size=$(du -sh $ABS_BIN_PATH | read s rest && print $s)
+    print "Binary Hash: ${BIN_SHA} (${size})"
+  elif [[ -e $ABS_BIN_PATH ]]; then
+    typeset size=$(du -h $ABS_BIN_PATH | read s rest && print $s)
+    print "Binary Size: ${size}"
+  else
+    print "Binary artifact not found at ${ABS_BIN_PATH}"
+  fi
+  
+  # Run if requested
+  if (( RUN_AFTER_BUILD )); then
+    typeset RUN_PATH=$RUN_BIN_PATH
+    [[ ! -x $RUN_PATH ]] && RUN_PATH="${TARGET_DIR_ABS}/${BIN_SUBDIR}/${PRIMARY_BIN}"
+    if [[ ! -x $RUN_PATH ]]; then
+      print "❌ Run failed: ${RUN_PATH} is missing or not executable"
+      exit 1
+    fi
+    print "Running ${RUN_PATH} (cwd: ${CALLER_CWD})..."
+    ( cd $CALLER_CWD && $RUN_PATH )
+    typeset RUN_STATUS=$?
+    if (( RUN_STATUS != 0 )); then
+      print "❌ Run failed with status ${RUN_STATUS}"
+      exit $RUN_STATUS
+    fi
+  fi
+  
+  [[ ${TRACE_BUILD:-} == 1 && -n $BIN_SHA ]] && {
+    print "--- TRACE_BUILD artifact ---"
+    print "ABS_BIN_PATH: ${ABS_BIN_PATH}"
+    print "SHA256: ${BIN_SHA}"
+    print "--------------------------------"
+  }
+  
+  # Persist fingerprint
+  mkdir -p ./target/$PROFILE 2>/dev/null
+  print "HASH=${NEW_FPRINT_HASH}\n${NEW_FPRINT_TEXT}" > $FPRINT_FILE
+  (( FPRINT_CHANGED )) && print "🧰 Cache normalized to current environment (fingerprint ${NEW_FPRINT_HASH})."
+  
+  [[ -z $USE_LOCKED ]] && {
+    print ""
+    print "⚠️  Remember: Built without --locked due to Cargo.lock issues"
+    print "  Consider running 'cargo update' and committing the changes"
+  }
+else
+  print "❌ Build failed"
+  exit 1
+fi

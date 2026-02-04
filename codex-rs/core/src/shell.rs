@@ -89,21 +89,35 @@ impl Eq for Shell {}
 
 #[cfg(unix)]
 fn get_user_shell_path() -> Option<PathBuf> {
-    use libc::getpwuid;
-    use libc::getuid;
-    use std::ffi::CStr;
+    // On Android/Termux, getpwuid() returns "/data/data/.../login" instead of the actual shell.
+    // Use $SHELL environment variable instead, which correctly points to bash/zsh.
+    #[cfg(target_os = "android")]
+    {
+        if let Ok(shell_path) = std::env::var("SHELL") {
+            return Some(PathBuf::from(shell_path));
+        }
+        return None;
+    }
 
-    unsafe {
-        let uid = getuid();
-        let pw = getpwuid(uid);
+    // On Linux/BSD/other Unix, use getpwuid() which works correctly
+    #[cfg(not(target_os = "android"))]
+    {
+        use libc::getpwuid;
+        use libc::getuid;
+        use std::ffi::CStr;
 
-        if !pw.is_null() {
-            let shell_path = CStr::from_ptr((*pw).pw_shell)
-                .to_string_lossy()
-                .into_owned();
-            Some(PathBuf::from(shell_path))
-        } else {
-            None
+        unsafe {
+            let uid = getuid();
+            let pw = getpwuid(uid);
+
+            if !pw.is_null() {
+                let shell_path = CStr::from_ptr((*pw).pw_shell)
+                    .to_string_lossy()
+                    .into_owned();
+                Some(PathBuf::from(shell_path))
+            } else {
+                None
+            }
         }
     }
 }
