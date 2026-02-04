@@ -19,6 +19,8 @@ dev-faults = ["code-auto-drive-core/dev-faults"]
 # Fork-specific extensions layered on top of upstream history rendering.
 code-fork = []
 test-helpers = ["code-auto-drive-core/test-helpers"]
+# Enable clipboard support (disabled on Android and for testing)
+clipboard = ["arboard"]
 
 [lints]
 workspace = true
@@ -71,7 +73,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 shlex = "1.3.0"
 sha2 = { workspace = true }
 tempfile = "3"
-arboard = "3"
+arboard = { version = "3", optional = true }
 strum = "0.27.2"
 strum_macros = "0.27.2"
 supports-color = "3.0.2"
@@ -110,8 +112,12 @@ vt100 = "0.15.0"
 libc = "0.2"
 signal-hook = "0.3"
 
+# Android doesn't have arboard support - disable clipboard feature for Android
 [target.'cfg(target_os = "android")'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots", "rustls-tls-native-roots"] }
+
+# For non-Android, use the standard Android reqwest config
+[target.'cfg(not(target_os = "android"))'.dependencies]
 
 
 [dev-dependencies]

@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use tempfile::Builder;
 
+#[cfg(feature = "clipboard")]
+use arboard;
+
 #[derive(Debug)]
 pub enum PasteImageError {
     ClipboardUnavailable(String),
@@ -37,6 +40,7 @@ pub struct PastedImageInfo {
 }
 
 /// Capture image from system clipboard, encode to PNG, and return bytes plus metadata.
+#[cfg(feature = "clipboard")]
 pub fn paste_image_as_png() -> Result<(Vec<u8>, PastedImageInfo), PasteImageError> {
     tracing::debug!("attempting clipboard image read");
     let mut cb = arboard::Clipboard::new()
@@ -67,6 +71,13 @@ pub fn paste_image_as_png() -> Result<(Vec<u8>, PastedImageInfo), PasteImageErro
     Ok((
         png,
         PastedImageInfo { width: w, height: h, encoded_format: EncodedImageFormat::Png },
+    ))
+}
+
+#[cfg(not(feature = "clipboard"))]
+pub fn paste_image_as_png() -> Result<(Vec<u8>, PastedImageInfo), PasteImageError> {
+    Err(PasteImageError::ClipboardUnavailable(
+        "clipboard feature not enabled for this platform".to_string(),
     ))
 }
 
