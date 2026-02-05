@@ -14251,8 +14251,11 @@ impl ChatWidget<'_> {
                 self.restore_reasoning_in_progress_if_streaming();
 
                 let response = DynamicToolResponse {
-                    call_id: ev.call_id.clone(),
-                    output: "dynamic tools are not supported in this UI".to_string(),
+                    content_items: vec![
+                        code_protocol::dynamic_tools::DynamicToolCallOutputContentItem::InputText {
+                            text: "dynamic tools are not supported in this UI".to_string(),
+                        },
+                    ],
                     success: false,
                 };
                 if let Err(e) = self.code_op_tx.send(Op::DynamicToolResponse {
@@ -30372,6 +30375,9 @@ use code_core::protocol::OrderMeta;
     #[test]
     fn auto_review_triggers_when_enabled_and_diff_seen() {
         let _guard = AutoReviewStubGuard::install(|| {});
+        let _capture_guard = CaptureCommitStubGuard::install(|_, _| {
+            Ok(GhostCommit::new("baseline".to_string(), None))
+        });
         let mut harness = ChatWidgetHarness::new();
         let chat = harness.chat();
         chat.config.tui.auto_review_enabled = true;
@@ -30389,6 +30395,9 @@ use code_core::protocol::OrderMeta;
         let calls_clone = calls.clone();
         let _guard = AutoReviewStubGuard::install(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
+        });
+        let _capture_guard = CaptureCommitStubGuard::install(|_, _| {
+            Ok(GhostCommit::new("baseline".to_string(), None))
         });
 
         let mut harness = ChatWidgetHarness::new();

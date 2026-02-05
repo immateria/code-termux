@@ -1317,6 +1317,7 @@ pub enum TextVerbosity {
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Personality {
+    None,
     Friendly,
     #[default]
     Pragmatic,
