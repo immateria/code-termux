@@ -1,9 +1,10 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use std::cell::RefCell;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app_event::AppEvent;
@@ -42,6 +43,10 @@ pub(crate) trait SettingsContent {
     fn is_complete(&self) -> bool;
     fn on_close(&mut self) {}
     fn handle_paste(&mut self, _text: String) -> bool {
+        false
+    }
+    /// Handle mouse events in the content area. Returns true if handled/needs redraw.
+    fn handle_mouse(&mut self, _mouse_event: MouseEvent, _area: Rect) -> bool {
         false
     }
 }
@@ -189,6 +194,11 @@ impl SettingsContent for ModelSettingsContent {
 
     fn is_complete(&self) -> bool {
         self.view.is_complete()
+    }
+
+    fn handle_mouse(&mut self, mouse_event: MouseEvent, area: Rect) -> bool {
+        use crate::bottom_pane::ConditionalUpdate;
+        matches!(self.view.handle_mouse_event_direct(mouse_event, area), ConditionalUpdate::NeedsRedraw)
     }
 }
 
@@ -1316,6 +1326,12 @@ pub(crate) struct SettingsOverlayView {
     auto_drive_content: Option<AutoDriveSettingsContent>,
     limits_content: Option<LimitsSettingsContent>,
     chrome_content: Option<ChromeSettingsContent>,
+    /// Last overlay content area for mouse calculations
+    last_content_area: RefCell<Rect>,
+    /// Last panel inner area where content is rendered (for mouse forwarding)
+    last_panel_inner_area: RefCell<Rect>,
+    /// Currently hovered section in sidebar (for visual feedback)
+    hovered_section: RefCell<Option<SettingsSection>>,
 }
 
 impl SettingsOverlayView {
@@ -1341,6 +1357,9 @@ impl SettingsOverlayView {
             auto_drive_content: None,
             limits_content: None,
             chrome_content: None,
+            last_content_area: RefCell::new(Rect::default()),
+            last_panel_inner_area: RefCell::new(Rect::default()),
+            hovered_section: RefCell::new(None),
         }
     }
 
@@ -1567,6 +1586,9 @@ impl SettingsOverlayView {
         if content.width == 0 || content.height == 0 {
             return;
         }
+
+        // Store content area for mouse hit testing
+        *self.last_content_area.borrow_mut() = content;
 
         if self.is_menu_active() {
             self.render_overview(content, buf);
@@ -2144,10 +2166,14 @@ impl SettingsOverlayView {
         }
         let end = (start + visible).min(total);
 
+        // Get current hover state
+        let hovered = *self.hovered_section.borrow();
+
         let mut lines: Vec<Line<'static>> = Vec::new();
         for idx in start..end {
             let section = sections[idx];
             let is_active = idx == selected_idx;
+            let is_hovered = hovered == Some(section) && !is_active;
             let is_first_visible = idx == start;
             let is_last_visible = idx + 1 == end;
 
@@ -2176,6 +2202,10 @@ impl SettingsOverlayView {
                     Style::default()
                         .fg(crate::colors::text())
                         .add_modifier(Modifier::BOLD)
+                } else if is_hovered {
+                    Style::default()
+                        .fg(crate::colors::text())
+                        .add_modifier(Modifier::UNDERLINED)
                 } else {
                     Style::default().fg(crate::colors::text_dim())
                 },
@@ -2186,6 +2216,12 @@ impl SettingsOverlayView {
                     Style::default()
                         .bg(crate::colors::selection())
                         .fg(crate::colors::text()),
+                )
+            } else if is_hovered {
+                // Use a subtle background tint for hover - border color works well
+                Line::from(spans).style(
+                    Style::default()
+                        .bg(crate::colors::border())
                 )
             } else {
                 Line::from(spans)
@@ -2207,6 +2243,9 @@ impl SettingsOverlayView {
         if area.width == 0 || area.height == 0 {
             return;
         }
+        // Cache the panel inner area for mouse event forwarding
+        *self.last_panel_inner_area.borrow_mut() = area;
+        
         match self.active_section() {
             SettingsSection::Model => {
                 if let Some(content) = self.model_content.as_ref() {
@@ -2421,5 +2460,164 @@ impl SettingsOverlayView {
             }
             _ => {}
         }
+    }
+
+    /// Handle mouse events in the settings overlay
+    /// Returns true if the event was handled and requires a redraw
+    pub(crate) fn handle_mouse_event(&mut self, mouse_event: MouseEvent, area: Rect) -> bool {
+        let x = mouse_event.column;
+        let y = mouse_event.row;
+
+        // Check if mouse is within overlay area
+        if x < area.x || x >= area.x + area.width || y < area.y || y >= area.y + area.height {
+            // Mouse outside overlay - clear hover
+            if self.hovered_section.borrow().is_some() {
+                *self.hovered_section.borrow_mut() = None;
+                return true;
+            }
+            return false;
+        }
+
+        match mouse_event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.is_menu_active() {
+                    // In menu mode - the content area is within the overlay block
+                    let content_area = *self.last_content_area.borrow();
+                    if content_area.width == 0 || content_area.height == 0 {
+                        return false;
+                    }
+
+                    // Check if click is within the list area (not the footer hint)
+                    if y < content_area.y || y >= content_area.y + content_area.height.saturating_sub(1) {
+                        return false;
+                    }
+
+                    // Each menu item takes ~3 lines on average
+                    let rel_y = y.saturating_sub(content_area.y) as usize;
+                    let approx_section_idx = rel_y / 3;
+                    
+                    if approx_section_idx < self.overview_rows.len() {
+                        let section = self.overview_rows[approx_section_idx].section;
+                        self.set_mode_section(section);
+                        return true;
+                    }
+                } else {
+                    // In section mode - check sidebar clicks first
+                    if let Some(section) = self.hit_test_sidebar(x, y) {
+                        if section != self.active_section() {
+                            self.set_mode_section(section);
+                            return true;
+                        }
+                        return false;
+                    }
+                    // Not in sidebar - forward to content
+                    return self.forward_mouse_to_content(mouse_event);
+                }
+                false
+            }
+            MouseEventKind::Moved => {
+                // Update hover state for sidebar
+                if !self.is_menu_active() {
+                    let new_hover = self.hit_test_sidebar(x, y);
+                    let current_hover = *self.hovered_section.borrow();
+                    if new_hover != current_hover {
+                        *self.hovered_section.borrow_mut() = new_hover;
+                        return true;
+                    }
+                    // Forward move events to content for hover effects
+                    return self.forward_mouse_to_content(mouse_event);
+                }
+                false
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                // Forward scroll to content if in section mode
+                if !self.is_menu_active() {
+                    return self.forward_mouse_to_content(mouse_event);
+                }
+                // In menu mode, consume scroll to prevent outer scroll
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Hit test the sidebar to find which section is at the given coordinates.
+    /// Returns None if not in sidebar area or no section at that position.
+    fn hit_test_sidebar(&self, x: u16, y: u16) -> Option<SettingsSection> {
+        let content_area = *self.last_content_area.borrow();
+        if content_area.width == 0 || content_area.height == 0 {
+            return None;
+        }
+
+        // Sidebar is 22 chars wide on the left
+        let sidebar_width = 22u16;
+        let sidebar_x = content_area.x;
+        let sidebar_end = sidebar_x.saturating_add(sidebar_width);
+
+        if x < sidebar_x || x >= sidebar_end {
+            return None;
+        }
+
+        // Check y is within content area
+        if y < content_area.y || y >= content_area.y + content_area.height {
+            return None;
+        }
+
+        let rel_y = y.saturating_sub(content_area.y);
+        let sections: Vec<SettingsSection> = if self.overview_rows.is_empty() {
+            SettingsSection::ALL.to_vec()
+        } else {
+            self.overview_rows.iter().map(|row| row.section).collect()
+        };
+
+        if sections.is_empty() {
+            return None;
+        }
+
+        let visible = content_area.height as usize;
+        let selected_idx = sections
+            .iter()
+            .position(|s| *s == self.active_section())
+            .unwrap_or(0);
+
+        let total = sections.len();
+        let mut start = 0usize;
+        if total > visible && visible > 0 {
+            let half = visible / 2;
+            if selected_idx > half {
+                start = selected_idx - half;
+            }
+            if start + visible > total {
+                start = total - visible;
+            }
+        }
+
+        let clicked_idx = start + (rel_y as usize);
+        if clicked_idx < sections.len() {
+            Some(sections[clicked_idx])
+        } else {
+            None
+        }
+    }
+
+    /// Forward mouse event to the active content view.
+    /// Returns true if the content handled the event and needs a redraw.
+    fn forward_mouse_to_content(&mut self, mouse_event: MouseEvent) -> bool {
+        let panel_area = *self.last_panel_inner_area.borrow();
+        if panel_area.width == 0 || panel_area.height == 0 {
+            return false;
+        }
+
+        match self.active_section() {
+            SettingsSection::Model => {
+                if let Some(content) = self.model_content.as_mut() {
+                    return content.handle_mouse(mouse_event, panel_area);
+                }
+            }
+            // For other sections, we can add mouse support as needed
+            // Currently only Model has full mouse support
+            _ => {}
+        }
+        false
     }
 }
