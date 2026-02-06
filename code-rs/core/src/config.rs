@@ -21,6 +21,9 @@ use crate::config_types::ProjectCommandConfig;
 use crate::config_types::ProjectHookConfig;
 use crate::config_types::SandboxWorkspaceWrite;
 use crate::config_types::ShellConfig;
+use crate::config_types::ShellPresetConfig;
+use crate::config_types::ShellScriptStyle;
+use crate::config_types::ShellStyleProfileConfig;
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyToml;
 use crate::config_types::TextVerbosity;
@@ -212,6 +215,9 @@ pub struct Config {
     /// Shell configuration for command execution.
     /// If not set, the user's default shell is detected automatically.
     pub shell: Option<ShellConfig>,
+
+    /// Optional shell-style-specific resource profiles keyed by style.
+    pub shell_style_profiles: HashMap<ShellScriptStyle, ShellStyleProfileConfig>,
 
     /// Patterns requiring an explicit confirm prefix before running.
     pub confirm_guard: ConfirmGuardConfig,
@@ -528,6 +534,10 @@ pub struct ConfigToml {
     /// Shell configuration for command execution.
     /// If not set, the user's default shell is detected automatically.
     pub shell: Option<ShellConfig>,
+
+    /// Optional shell-style resource profiles keyed by style slug.
+    #[serde(default)]
+    pub shell_style_profiles: HashMap<ShellScriptStyle, ShellStyleProfileConfig>,
 
     /// Sandbox mode to use.
     pub sandbox_mode: Option<SandboxMode>,
@@ -1354,6 +1364,19 @@ impl Config {
             auto_drive.model_reasoning_effort,
         );
 
+        let mut tui_config = cfg.tui.clone().unwrap_or_default();
+        if let Some(presets_path) = tui_config.shell_presets_file.clone() {
+            match Self::load_shell_presets_from_file(&presets_path, &resolved_cwd) {
+                Ok(mut file_presets) => {
+                    file_presets.extend(tui_config.shell_presets.clone());
+                    tui_config.shell_presets = file_presets;
+                }
+                Err(err) => {
+                    tracing::warn!("{err}");
+                }
+            }
+        }
+
         let config = Self {
             model,
             model_explicit,
@@ -1386,6 +1409,7 @@ impl Config {
             project_commands,
             shell_environment_policy,
             shell: cfg.shell,
+            shell_style_profiles: cfg.shell_style_profiles,
             confirm_guard,
             disable_response_storage: config_profile
                 .disable_response_storage
@@ -1425,7 +1449,7 @@ impl Config {
             code_home,
             history,
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
-            tui: cfg.tui.clone().unwrap_or_default(),
+            tui: tui_config.clone(),
             auto_drive,
             auto_drive_use_chat_model,
             code_linux_sandbox_exe,
@@ -1480,11 +1504,7 @@ impl Config {
             max_run_deadline: None,
             timeboxed_exec_mode: false,
             // Surface TUI notifications preference from config when present.
-            tui_notifications: cfg
-                .tui
-                .as_ref()
-                .map(|t| t.notifications.clone())
-                .unwrap_or_default(),
+            tui_notifications: tui_config.notifications.clone(),
             auto_drive_observer_cadence: cfg.auto_drive_observer_cadence.unwrap_or(5),
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
@@ -1531,6 +1551,40 @@ impl Config {
         cwd: &Path,
     ) -> std::io::Result<Option<String>> {
         sources::get_compact_prompt_override(path, cwd)
+    }
+
+    fn load_shell_presets_from_file(
+        path: &PathBuf,
+        cwd: &Path,
+    ) -> std::io::Result<Vec<ShellPresetConfig>> {
+        #[derive(Deserialize)]
+        struct ShellPresetsFile {
+            #[serde(default)]
+            shell_presets: Vec<ShellPresetConfig>,
+        }
+
+        let full_path = if path.is_relative() {
+            cwd.join(path)
+        } else {
+            path.clone()
+        };
+        let full_path_display = full_path.display().to_string();
+
+        let contents = std::fs::read_to_string(&full_path).map_err(|err| {
+            std::io::Error::new(
+                err.kind(),
+                format!("failed to read shell presets file {full_path_display}: {err}"),
+            )
+        })?;
+
+        let parsed: ShellPresetsFile = toml::from_str(&contents).map_err(|err| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("failed to parse shell presets file {full_path_display}: {err}"),
+            )
+        })?;
+
+        Ok(parsed.shell_presets)
     }
 }
 
@@ -2621,6 +2675,126 @@ model_verbosity = "high"
             resolved.compact_prompt_override.as_deref(),
             Some(file_contents)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_shell_presets_file_merges_before_inline_presets() -> std::io::Result<()> {
+        let fixture = create_test_fixture()?;
+        let shell_presets_path = fixture.cwd().join("shell-presets.toml");
+        std::fs::write(
+            &shell_presets_path,
+            r#"
+[[shell_presets]]
+id = "zsh"
+command = "zsh"
+display_name = "File Zsh"
+description = "from file"
+script_style = "zsh"
+"#,
+        )?;
+
+        let inline_zsh = ShellPresetConfig {
+            id: "zsh".to_string(),
+            command: "zsh".to_string(),
+            display_name: "Inline Zsh".to_string(),
+            description: "from inline config".to_string(),
+            default_args: vec!["-l".to_string()],
+            script_style: None,
+            show_in_picker: true,
+        };
+
+        let mut cfg = fixture.cfg.clone();
+        cfg.tui = Some(Tui {
+            shell_presets: vec![inline_zsh.clone()],
+            shell_presets_file: Some(PathBuf::from("shell-presets.toml")),
+            ..Tui::default()
+        });
+
+        let overrides = ConfigOverrides {
+            cwd: Some(fixture.cwd()),
+            ..Default::default()
+        };
+
+        let resolved = Config::load_from_base_config_with_overrides(
+            cfg,
+            overrides,
+            fixture.code_home(),
+        )?;
+
+        assert_eq!(resolved.tui.shell_presets.len(), 2);
+        assert_eq!(resolved.tui.shell_presets[0].display_name, "File Zsh");
+        assert_eq!(
+            resolved.tui.shell_presets[0].script_style,
+            Some(crate::config_types::ShellScriptStyle::Zsh)
+        );
+        assert_eq!(resolved.tui.shell_presets[1], inline_zsh);
+        Ok(())
+    }
+
+    #[test]
+    fn test_shell_script_style_loads_from_shell_config() -> std::io::Result<()> {
+        let fixture = create_test_fixture()?;
+        let mut cfg = fixture.cfg.clone();
+        cfg.shell = Some(ShellConfig {
+            path: "/bin/zsh".to_string(),
+            args: vec!["-l".to_string()],
+            script_style: Some(crate::config_types::ShellScriptStyle::Zsh),
+        });
+
+        let overrides = ConfigOverrides {
+            cwd: Some(fixture.cwd()),
+            ..Default::default()
+        };
+
+        let resolved = Config::load_from_base_config_with_overrides(
+            cfg,
+            overrides,
+            fixture.code_home(),
+        )?;
+
+        assert_eq!(
+            resolved.shell.and_then(|shell| shell.script_style),
+            Some(crate::config_types::ShellScriptStyle::Zsh)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_shell_presets_file_parse_error_is_non_fatal() -> std::io::Result<()> {
+        let fixture = create_test_fixture()?;
+        let shell_presets_path = fixture.cwd().join("shell-presets.toml");
+        std::fs::write(&shell_presets_path, "not-valid = [")?;
+
+        let inline_preset = ShellPresetConfig {
+            id: "termux-bash".to_string(),
+            command: "bash".to_string(),
+            display_name: "Termux Bash".to_string(),
+            description: "inline fallback preset".to_string(),
+            default_args: vec!["-l".to_string()],
+            script_style: None,
+            show_in_picker: true,
+        };
+
+        let mut cfg = fixture.cfg.clone();
+        cfg.tui = Some(Tui {
+            shell_presets: vec![inline_preset.clone()],
+            shell_presets_file: Some(PathBuf::from("shell-presets.toml")),
+            ..Tui::default()
+        });
+
+        let overrides = ConfigOverrides {
+            cwd: Some(fixture.cwd()),
+            ..Default::default()
+        };
+
+        let resolved = Config::load_from_base_config_with_overrides(
+            cfg,
+            overrides,
+            fixture.code_home(),
+        )?;
+
+        assert_eq!(resolved.tui.shell_presets, vec![inline_preset]);
         Ok(())
     }
 

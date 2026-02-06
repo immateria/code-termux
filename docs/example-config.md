@@ -115,6 +115,30 @@ include_only = []
 experimental_use_profile = false
 
 ################################################################################
+# Shell Selection & Style Profiles
+################################################################################
+
+# Optional explicit shell override. When omitted, Codex auto-detects your shell.
+[shell]
+path = "/bin/zsh"
+args = ["-lc"]
+script_style = "zsh" # posix-sh | bash-zsh-compatible | zsh
+
+# Style-scoped resources. The active style comes from shell.script_style or
+# inference from the shell executable name (sh/bash/zsh).
+[shell_style_profiles.zsh]
+references = ["docs/shell/zsh-style.md"]
+prepend_developer_messages = [
+  "Write idiomatic zsh and prefer native zsh array forms."
+]
+skills = ["zsh-arrays", "termux-zsh"]
+
+[shell_style_profiles.zsh.mcp_servers]
+# Optional allow-list and deny-list applied in this order.
+include = ["termux-docs", "shell-lint"]
+exclude = ["linux-only"]
+
+################################################################################
 # History & File Opener
 ################################################################################
 

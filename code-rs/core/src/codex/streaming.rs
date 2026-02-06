@@ -343,11 +343,114 @@ pub(super) async fn submission_loop(
                     updated_config.tool_output_max_bytes = new_default_tool_output_max_bytes;
                 }
 
-                let skills_outcome =
+                let resolved_shell = shell::default_user_shell_with_override(
+                    shell_override.as_ref().or(updated_config.shell.as_ref()),
+                )
+                .await;
+                let active_shell_style = resolved_shell.script_style();
+                let active_shell_style_label = active_shell_style.map(|style| style.to_string());
+                let mut shell_style_profile_messages: Vec<String> = Vec::new();
+                let mut shell_style_skill_filter: Option<HashSet<String>> = None;
+
+                if let Some(style) = active_shell_style
+                    && let Some(profile) = updated_config.shell_style_profiles.get(&style).cloned()
+                {
+                    let included_servers: HashSet<String> = profile
+                        .mcp_servers
+                        .include
+                        .iter()
+                        .map(|name| name.trim().to_ascii_lowercase())
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    if !included_servers.is_empty() {
+                        updated_config.mcp_servers.retain(|name, _| {
+                            included_servers.contains(&name.to_ascii_lowercase())
+                        });
+                    }
+
+                    let excluded_servers: HashSet<String> = profile
+                        .mcp_servers
+                        .exclude
+                        .iter()
+                        .map(|name| name.trim().to_ascii_lowercase())
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    if !excluded_servers.is_empty() {
+                        updated_config.mcp_servers.retain(|name, _| {
+                            !excluded_servers.contains(&name.to_ascii_lowercase())
+                        });
+                    }
+
+                    for message in profile.prepend_developer_messages {
+                        let trimmed = message.trim();
+                        if !trimmed.is_empty() {
+                            shell_style_profile_messages.push(trimmed.to_string());
+                        }
+                    }
+
+                    for reference in profile.references {
+                        let full_path = if reference.is_relative() {
+                            updated_config.cwd.join(&reference)
+                        } else {
+                            reference.clone()
+                        };
+                        match std::fs::read_to_string(&full_path) {
+                            Ok(contents) => {
+                                let trimmed = contents.trim();
+                                if !trimmed.is_empty() {
+                                    shell_style_profile_messages.push(format!(
+                                        "Shell style reference `{style}` from `{}`:\n\n{trimmed}",
+                                        full_path.display(),
+                                    ));
+                                }
+                            }
+                            Err(err) => {
+                                warn!(
+                                    "failed to read shell style reference {}: {err}",
+                                    full_path.display()
+                                );
+                            }
+                        }
+                    }
+
+                    let requested_skills: HashSet<String> = profile
+                        .skills
+                        .iter()
+                        .map(|name| name.trim().to_ascii_lowercase())
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    if !requested_skills.is_empty() {
+                        shell_style_skill_filter = Some(requested_skills);
+                    }
+                }
+
+                let mut skills_outcome =
                     updated_config.skills_enabled.then(|| load_skills(&updated_config));
-                if let Some(outcome) = &skills_outcome {
+                if let Some(outcome) = &mut skills_outcome {
                     for err in &outcome.errors {
                         warn!("invalid skill {}: {}", err.path.display(), err.message);
+                    }
+
+                    if let Some(skill_filter) = shell_style_skill_filter.as_ref() {
+                        let mut matched_skills: HashSet<String> = HashSet::new();
+                        outcome.skills.retain(|skill| {
+                            let normalized = skill.name.trim().to_ascii_lowercase();
+                            let keep = skill_filter.contains(&normalized);
+                            if keep {
+                                matched_skills.insert(normalized);
+                            }
+                            keep
+                        });
+
+                        if let Some(style_label) = active_shell_style_label.as_deref() {
+                            for requested in skill_filter {
+                                if !matched_skills.contains(requested) {
+                                    warn!(
+                                        "shell style profile `{style_label}` requested unknown skill `{requested}`"
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -585,9 +688,6 @@ pub(super) async fn submission_loop(
                         mcp_connection_errors.push(message);
                     }
                 }
-                let default_shell = shell::default_user_shell_with_override(
-                    shell_override.as_ref().or(config.shell.as_ref())
-                ).await;
                 let mut tools_config = ToolsConfig::new(
                     &config.model_family,
                     approval_policy,
@@ -660,7 +760,8 @@ pub(super) async fn submission_loop(
                     rollout: Mutex::new(rollout_recorder),
                     code_linux_sandbox_exe: config.code_linux_sandbox_exe.clone(),
                     disable_response_storage,
-                    user_shell: default_shell,
+                    user_shell: resolved_shell,
+                    shell_style_profile_messages,
                     show_raw_agent_reasoning: config.show_raw_agent_reasoning,
                     pending_browser_screenshots: Mutex::new(Vec::new()),
                     last_system_status: Mutex::new(None),
@@ -1986,6 +2087,18 @@ async fn run_turn(
             .clone()
             .into_iter()
             .collect();
+        if let Some(shell_style) = sess.user_shell.script_style() {
+            prepend_developer_messages.push(shell_style.developer_instruction().to_string());
+        }
+        prepend_developer_messages.extend(
+            sess
+                .shell_style_profile_messages
+                .iter()
+                .filter_map(|message| {
+                    let trimmed = message.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                }),
+        );
         if should_inject_html_sanitizer_guardrails(&attempt_input) {
             prepend_developer_messages.push(HTML_SANITIZER_GUARDRAILS_MESSAGE.to_string());
         }

@@ -20,6 +20,9 @@ pub struct ShellPreset {
     /// Default arguments to pass to the shell
     #[serde(default)]
     pub default_args: Vec<String>,
+    /// Preferred shell scripting style for model-generated commands.
+    #[serde(default)]
+    pub script_style: Option<String>,
     /// Whether this shell should be shown in the picker
     #[serde(default = "default_show_in_picker")]
     pub show_in_picker: bool,
@@ -38,6 +41,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Zsh".to_string(),
             description: "Z shell - modern shell with powerful features".to_string(),
             default_args: vec![],
+            script_style: Some("zsh".to_string()),
             show_in_picker: true,
         },
         ShellPreset {
@@ -46,6 +50,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Bash".to_string(),
             description: "Bourne Again Shell - most common Unix shell".to_string(),
             default_args: vec![],
+            script_style: Some("bash-zsh-compatible".to_string()),
             show_in_picker: true,
         },
         ShellPreset {
@@ -54,6 +59,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Fish".to_string(),
             description: "Friendly Interactive Shell - modern shell with great defaults".to_string(),
             default_args: vec![],
+            script_style: None,
             show_in_picker: true,
         },
         ShellPreset {
@@ -62,6 +68,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Nushell".to_string(),
             description: "Nu shell - modern shell with structured data".to_string(),
             default_args: vec![],
+            script_style: None,
             show_in_picker: true,
         },
         ShellPreset {
@@ -70,6 +77,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Elvish".to_string(),
             description: "Elvish - expressive programming language and shell".to_string(),
             default_args: vec![],
+            script_style: None,
             show_in_picker: true,
         },
         ShellPreset {
@@ -78,6 +86,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "PowerShell".to_string(),
             description: "PowerShell Core - cross-platform automation shell".to_string(),
             default_args: vec![],
+            script_style: None,
             show_in_picker: true,
         },
         ShellPreset {
@@ -86,6 +95,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Dash".to_string(),
             description: "Debian Almquist Shell - lightweight POSIX shell".to_string(),
             default_args: vec![],
+            script_style: Some("posix-sh".to_string()),
             show_in_picker: true,
         },
         ShellPreset {
@@ -94,6 +104,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Sh".to_string(),
             description: "Bourne Shell - original Unix shell".to_string(),
             default_args: vec![],
+            script_style: Some("posix-sh".to_string()),
             show_in_picker: true,
         },
         ShellPreset {
@@ -102,6 +113,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Xonsh".to_string(),
             description: "Xonsh - Python-powered shell".to_string(),
             default_args: vec![],
+            script_style: None,
             show_in_picker: true,
         },
         ShellPreset {
@@ -110,6 +122,7 @@ static BUILTIN_PRESETS: Lazy<Vec<ShellPreset>> = Lazy::new(|| {
             display_name: "Oil Shell".to_string(),
             description: "Oil shell - our upgrade path from bash".to_string(),
             default_args: vec![],
+            script_style: None,
             show_in_picker: true,
         },
     ]
@@ -166,6 +179,7 @@ mod tests {
             display_name: "My Custom Zsh".to_string(),
             description: "Custom description".to_string(),
             default_args: vec!["-i".to_string()],
+            script_style: Some("zsh".to_string()),
             show_in_picker: true,
         }];
         
@@ -182,6 +196,7 @@ mod tests {
             display_name: "My Shell".to_string(),
             description: "A custom shell".to_string(),
             default_args: vec![],
+            script_style: None,
             show_in_picker: true,
         }];
         

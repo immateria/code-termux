@@ -13,6 +13,7 @@ use crate::util::buffer::fill_rect;
 use code_common::shell_presets::ShellPreset;
 use code_protocol::custom_prompts::CustomPrompt;
 use code_protocol::skills::Skill;
+use code_core::config_types::ShellConfig;
 use code_core::protocol::TokenUsage;
 use code_file_search::FileMatch;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
@@ -805,7 +806,11 @@ impl BottomPane<'_> {
     }
 
     /// Show the shell selection UI
-    pub fn show_shell_selection(&mut self, current_shell: Option<String>, shell_presets: Vec<ShellPreset>) {
+    pub fn show_shell_selection(
+        &mut self,
+        current_shell: Option<ShellConfig>,
+        shell_presets: Vec<ShellPreset>,
+    ) {
         let view = ShellSelectionView::new(current_shell, shell_presets, self.app_event_tx.clone());
         self.active_view = Some(Box::new(view));
         self.active_view_kind = ActiveViewKind::ShellSelection;

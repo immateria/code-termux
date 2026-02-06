@@ -175,6 +175,110 @@ pub struct ShellConfig {
     pub path: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub script_style: Option<ShellScriptStyle>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum ShellScriptStyle {
+    #[serde(alias = "posix", alias = "sh")]
+    PosixSh,
+    #[serde(alias = "bash-zsh")]
+    BashZshCompatible,
+    #[serde(alias = "zsh-idiomatic")]
+    Zsh,
+}
+
+impl ShellScriptStyle {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "posix-sh" | "posix" | "sh" => Some(Self::PosixSh),
+            "bash-zsh-compatible" | "bash-zsh" => Some(Self::BashZshCompatible),
+            "zsh" | "zsh-idiomatic" => Some(Self::Zsh),
+            _ => None,
+        }
+    }
+
+    pub fn infer_from_shell_program(program: &str) -> Option<Self> {
+        let shell_name = std::path::Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(program)
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_ascii_lowercase();
+        let shell_name = shell_name.strip_suffix(".exe").unwrap_or(shell_name.as_str());
+
+        match shell_name {
+            "sh" | "dash" | "ash" => Some(Self::PosixSh),
+            "bash" => Some(Self::BashZshCompatible),
+            "zsh" => Some(Self::Zsh),
+            _ => None,
+        }
+    }
+
+    pub fn developer_instruction(self) -> &'static str {
+        match self {
+            Self::PosixSh => {
+                "When writing shell code, target strict POSIX `sh` compatibility. Avoid Bash/Zsh-only syntax and options."
+            }
+            Self::BashZshCompatible => {
+                "When writing shell code, make it run in both Bash and Zsh. Prefer syntax and expansions that are shared by both shells."
+            }
+            Self::Zsh => {
+                "When writing shell code, use idiomatic Zsh. Prefer native Zsh array/expansion forms (for example `${(@)array}`) over compatibility-oriented Bash forms."
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellStyleMcpConfig {
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShellStyleProfileConfig {
+    /// Additional style-specific reference files to load into model context.
+    /// Relative paths are resolved against the session cwd.
+    #[serde(default)]
+    pub references: Vec<PathBuf>,
+
+    /// Additional style-specific developer messages prepended each turn.
+    #[serde(default)]
+    pub prepend_developer_messages: Vec<String>,
+
+    /// Optional list of skill names to inject when this style is active.
+    /// When non-empty, only these skill names are included.
+    #[serde(default)]
+    pub skills: Vec<String>,
+
+    /// MCP server include/exclude filters applied when this style is active.
+    #[serde(default)]
+    pub mcp_servers: ShellStyleMcpConfig,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct ShellPresetConfig {
+    pub id: String,
+    pub command: String,
+    pub display_name: String,
+    pub description: String,
+    #[serde(default)]
+    pub default_args: Vec<String>,
+    #[serde(default)]
+    pub script_style: Option<ShellScriptStyle>,
+    #[serde(default = "default_shell_preset_show_in_picker")]
+    pub show_in_picker: bool,
+}
+
+fn default_shell_preset_show_in_picker() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -716,6 +820,15 @@ pub struct Tui {
     /// Run a background `/review` after turns that modify code.
     #[serde(default = "default_true")]
     pub auto_review_enabled: bool,
+
+    /// Optional user-defined shell presets for the shell selector UI.
+    #[serde(default)]
+    pub shell_presets: Vec<ShellPresetConfig>,
+
+    /// Optional path to a TOML file containing additional shell presets.
+    /// Relative paths are resolved against the session cwd.
+    #[serde(default)]
+    pub shell_presets_file: Option<PathBuf>,
 }
 
 // Important: Provide a manual Default so that when no config file exists and we
@@ -737,6 +850,8 @@ impl Default for Tui {
             alternate_screen: true,
             review_auto_resolve: true,
             auto_review_enabled: true,
+            shell_presets: Vec::new(),
+            shell_presets_file: None,
         }
     }
 }
@@ -1631,5 +1746,119 @@ mod tests {
         "#,
         )
         .expect_err("should reject bearer token for stdio transport");
+    }
+
+    #[test]
+    fn shell_script_style_parse_accepts_aliases() {
+        assert_eq!(
+            ShellScriptStyle::parse("posix-sh"),
+            Some(ShellScriptStyle::PosixSh)
+        );
+        assert_eq!(
+            ShellScriptStyle::parse("bash-zsh"),
+            Some(ShellScriptStyle::BashZshCompatible)
+        );
+        assert_eq!(ShellScriptStyle::parse("zsh"), Some(ShellScriptStyle::Zsh));
+    }
+
+    #[test]
+    fn shell_script_style_deserializes_aliases_in_shell_config() {
+        #[derive(Deserialize)]
+        struct Root {
+            shell: ShellConfig,
+        }
+
+        let parsed: Root = toml::from_str(
+            r#"
+            [shell]
+            path = "/bin/bash"
+            script_style = "bash-zsh"
+        "#,
+        )
+        .expect("shell style alias should deserialize");
+
+        assert_eq!(
+            parsed.shell.script_style,
+            Some(ShellScriptStyle::BashZshCompatible)
+        );
+    }
+
+    #[test]
+    fn shell_script_style_infers_from_shell_program() {
+        assert_eq!(
+            ShellScriptStyle::infer_from_shell_program("/bin/sh"),
+            Some(ShellScriptStyle::PosixSh)
+        );
+        assert_eq!(
+            ShellScriptStyle::infer_from_shell_program("/data/data/com.termux/files/usr/bin/bash"),
+            Some(ShellScriptStyle::BashZshCompatible)
+        );
+        assert_eq!(
+            ShellScriptStyle::infer_from_shell_program("zsh.exe"),
+            Some(ShellScriptStyle::Zsh)
+        );
+        assert_eq!(ShellScriptStyle::infer_from_shell_program("fish"), None);
+    }
+
+    #[test]
+    fn deserialize_shell_style_profiles_table() {
+        #[derive(Deserialize)]
+        struct Root {
+            #[serde(default)]
+            shell_style_profiles: HashMap<ShellScriptStyle, ShellStyleProfileConfig>,
+        }
+
+        let parsed: Root = toml::from_str(
+            r#"
+            [shell_style_profiles.zsh]
+            references = ["docs/shell/zsh.md"]
+            prepend_developer_messages = ["Use idiomatic zsh."]
+            skills = ["zsh-arrays"]
+
+            [shell_style_profiles.zsh.mcp_servers]
+            include = ["termux"]
+            exclude = ["linux-only"]
+        "#,
+        )
+        .expect("shell style profile should deserialize");
+
+        let profile = parsed
+            .shell_style_profiles
+            .get(&ShellScriptStyle::Zsh)
+            .expect("zsh profile exists");
+        assert_eq!(profile.references, vec![PathBuf::from("docs/shell/zsh.md")]);
+        assert_eq!(
+            profile.prepend_developer_messages,
+            vec!["Use idiomatic zsh.".to_string()]
+        );
+        assert_eq!(profile.skills, vec!["zsh-arrays".to_string()]);
+        assert_eq!(profile.mcp_servers.include, vec!["termux".to_string()]);
+        assert_eq!(profile.mcp_servers.exclude, vec!["linux-only".to_string()]);
+    }
+
+    #[test]
+    fn deserialize_shell_style_profiles_table_accepts_alias_keys() {
+        #[derive(Deserialize)]
+        struct Root {
+            #[serde(default)]
+            shell_style_profiles: HashMap<ShellScriptStyle, ShellStyleProfileConfig>,
+        }
+
+        let parsed: Root = toml::from_str(
+            r#"
+            [shell_style_profiles.bash-zsh]
+            prepend_developer_messages = ["Use shared bash/zsh syntax."]
+        "#,
+        )
+        .expect("shell style profile alias key should deserialize");
+
+        let profile = parsed
+            .shell_style_profiles
+            .get(&ShellScriptStyle::BashZshCompatible)
+            .expect("bash-zsh-compatible profile exists");
+        assert_eq!(
+            profile.prepend_developer_messages,
+            vec!["Use shared bash/zsh syntax.".to_string()]
+        );
     }
 }

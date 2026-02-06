@@ -552,6 +552,56 @@ code mcp login SERVER_NAME
 code mcp logout SERVER_NAME
 ```
 
+## shell
+
+Code auto-detects your login shell by default. Use `[shell]` to override the
+command used for model-generated shell execution:
+
+```toml
+[shell]
+path = "/bin/zsh"
+args = ["-lc"]
+script_style = "zsh"
+```
+
+- `path` is the shell executable.
+- `args` are prepended when invoking that shell.
+- `script_style` is optional and controls shell-code instruction style.
+  - Allowed values: `posix-sh`, `bash-zsh-compatible`, `zsh`.
+  - If omitted, Code tries to infer style from the shell executable name (`sh`,
+    `bash`, `zsh`).
+
+## shell_style_profiles
+
+Use shell-style profiles to attach style-specific resources. When the active
+shell style matches, Code applies these settings to the session:
+
+- Adds `prepend_developer_messages` and `references` content to developer
+  instructions.
+- Restricts loaded skills to the listed `skills` names (if non-empty).
+- Filters MCP servers via `mcp_servers.include`/`mcp_servers.exclude`.
+
+```toml
+[shell_style_profiles.zsh]
+references = ["docs/shell/zsh-style.md"]
+prepend_developer_messages = [
+  "Write idiomatic zsh; prefer native zsh array forms."
+]
+skills = ["zsh-arrays", "termux-zsh"]
+
+[shell_style_profiles.zsh.mcp_servers]
+include = ["termux-docs", "shell-lint"]
+exclude = ["linux-only"]
+```
+
+Notes:
+
+- `references` paths may be absolute or relative to the current working
+  directory.
+- `skills` entries match skill names (case-insensitive) from discovered
+  `SKILL.md` files.
+- `include` runs first, then `exclude`.
+
 ## shell_environment_policy
 
 Code spawns subprocesses (e.g. when executing a `local_shell` tool-call suggested by the assistant). By default it now passes **your full environment** to those subprocesses. You can tune this behavior via the **`shell_environment_policy`** block in `config.toml`:
@@ -1002,6 +1052,14 @@ Project commands appear in the TUI via `/cmd <name>` and run through the standar
 | `sandbox_workspace_write.exclude_slash_tmp` | boolean | Exclude `/tmp` from writable roots (default: false). |
 | `disable_response_storage` | boolean | Required for ZDR orgs. |
 | `notify` | array<string> | External program for notifications. |
+| `shell.path` | string | Shell executable override. |
+| `shell.args` | array<string> | Arguments passed with `shell.path`. |
+| `shell.script_style` | `posix-sh` \| `bash-zsh-compatible` \| `zsh` | Shell-code style preference for prompt guidance and style profiles. |
+| `shell_style_profiles.<style>.references` | array<string> | Style-specific reference file paths to inject into developer context. |
+| `shell_style_profiles.<style>.prepend_developer_messages` | array<string> | Extra developer messages for the active shell style. |
+| `shell_style_profiles.<style>.skills` | array<string> | When non-empty, keep only these skill names for the active style. |
+| `shell_style_profiles.<style>.mcp_servers.include` | array<string> | Optional MCP server allow-list for the active style. |
+| `shell_style_profiles.<style>.mcp_servers.exclude` | array<string> | Optional MCP server deny-list for the active style. |
 | `instructions` | string | Currently ignored; use `experimental_instructions_file` or `AGENTS.md`. |
 | `mcp_servers.<id>.command` | string | MCP server launcher command. |
 | `mcp_servers.<id>.args` | array<string> | MCP server args. |
@@ -1029,6 +1087,8 @@ Project commands appear in the TUI via `/cmd <name>` and run through the standar
 | `file_opener` | `vscode` \| `vscode-insiders` \| `windsurf` \| `cursor` \| `none` | URI scheme for clickable citations (default: `vscode`). |
 | `tui` | table | TUI‑specific options. |
 | `tui.notifications` | boolean \| array<string> | Enable desktop notifications in the tui (default: false). |
+| `tui.shell_presets` | array<table> | Additional shell picker presets (`id`, `command`, `display_name`, `description`, optional `default_args`, `script_style`). |
+| `tui.shell_presets_file` | string (path) | Optional TOML file that contributes additional `[[shell_presets]]` entries. |
 | `hide_agent_reasoning` | boolean | Hide model reasoning events. |
 | `show_raw_agent_reasoning` | boolean | Show raw reasoning (when available). |
 | `model_reasoning_effort` | `minimal` \| `low` \| `medium` \| `high` | Responses API reasoning effort. |

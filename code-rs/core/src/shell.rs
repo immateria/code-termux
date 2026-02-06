@@ -3,6 +3,7 @@ use serde::Serialize;
 use shlex;
 use std::path::PathBuf;
 
+use crate::config_types::ShellScriptStyle;
 use crate::config_types::ShellConfig;
 use crate::util::is_shell_like_executable;
 
@@ -27,6 +28,7 @@ pub struct PowerShellConfig {
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct GenericShell {
     pub(crate) command: Vec<String>,
+    pub(crate) script_style: Option<ShellScriptStyle>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -39,6 +41,22 @@ pub enum Shell {
 }
 
 impl Shell {
+    pub fn script_style(&self) -> Option<ShellScriptStyle> {
+        match self {
+            Shell::Zsh(_) => Some(ShellScriptStyle::Zsh),
+            Shell::Bash(_) => Some(ShellScriptStyle::BashZshCompatible),
+            Shell::Generic(generic) => generic
+                .script_style
+                .or_else(|| {
+                    generic
+                        .command
+                        .first()
+                        .and_then(|program| ShellScriptStyle::infer_from_shell_program(program))
+                }),
+            Shell::PowerShell(_) | Shell::Unknown => None,
+        }
+    }
+
     pub fn format_default_shell_invocation(&self, command: Vec<String>) -> Option<Vec<String>> {
         match self {
             Shell::Zsh(zsh) => format_shell_invocation_with_rc(
@@ -97,7 +115,17 @@ impl Shell {
                 Some(command)
             }
             Shell::Generic(generic) => {
-                // For generic shells, prepend the shell command to the user command
+                // For generic shells that execute scripts via -c/-lc, pass the
+                // model command as a single script argument.
+                if generic_shell_expects_script_argument(generic.command.as_slice()) {
+                    let script = strip_bash_lc(command.as_slice())
+                        .or_else(|| shlex::try_join(command.iter().map(String::as_str)).ok())?;
+                    let mut invocation = generic.command.clone();
+                    invocation.push(script);
+                    return Some(invocation);
+                }
+
+                // Other generic shells execute command/argv directly.
                 let mut invocation = generic.command.clone();
                 invocation.extend(command);
                 Some(invocation)
@@ -153,6 +181,13 @@ fn strip_bash_lc(command: &[String]) -> Option<String> {
 
 fn is_bash_like(cmd: &str) -> bool {
     is_shell_like_executable(cmd)
+}
+
+fn generic_shell_expects_script_argument(shell_command: &[String]) -> bool {
+    matches!(
+        shell_command.last().map(String::as_str),
+        Some("-c") | Some("-lc")
+    )
 }
 
 #[cfg(unix)]
@@ -245,6 +280,7 @@ pub async fn default_user_shell_with_override(shell_override: Option<&ShellConfi
             command: std::iter::once(shell_config.path.clone())
                 .chain(shell_config.args.clone())
                 .collect(),
+            script_style: shell_config.script_style,
         })
     } else {
         default_user_shell().await
@@ -400,6 +436,72 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_generic_shell_with_lc_wraps_as_single_script_argument() {
+        let shell = Shell::Generic(GenericShell {
+            command: vec!["bash".to_string(), "-lc".to_string()],
+            script_style: None,
+        });
+
+        let invocation = shell.format_default_shell_invocation(vec![
+            "bash".to_string(),
+            "-lc".to_string(),
+            "ls -l".to_string(),
+        ]);
+
+        assert_eq!(
+            invocation,
+            Some(vec![
+                "bash".to_string(),
+                "-lc".to_string(),
+                "ls -l".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_generic_shell_without_c_extends_argv() {
+        let shell = Shell::Generic(GenericShell {
+            command: vec!["my-shell".to_string(), "--noprofile".to_string()],
+            script_style: None,
+        });
+
+        let invocation = shell.format_default_shell_invocation(vec![
+            "echo".to_string(),
+            "hello".to_string(),
+        ]);
+
+        assert_eq!(
+            invocation,
+            Some(vec![
+                "my-shell".to_string(),
+                "--noprofile".to_string(),
+                "echo".to_string(),
+                "hello".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_shell_script_style_prefers_explicit_generic_style() {
+        let shell = Shell::Generic(GenericShell {
+            command: vec!["bash".to_string(), "-lc".to_string()],
+            script_style: Some(ShellScriptStyle::PosixSh),
+        });
+
+        assert_eq!(shell.script_style(), Some(ShellScriptStyle::PosixSh));
+    }
+
+    #[test]
+    fn test_shell_script_style_infers_from_generic_program() {
+        let shell = Shell::Generic(GenericShell {
+            command: vec!["/bin/zsh".to_string()],
+            script_style: None,
+        });
+
+        assert_eq!(shell.script_style(), Some(ShellScriptStyle::Zsh));
     }
 }
 

@@ -5,6 +5,7 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::colors;
 use code_common::shell_presets::ShellPreset;
+use code_core::config_types::ShellConfig;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -25,7 +26,7 @@ pub(crate) struct ShellSelectionView {
     shells: Vec<ShellOption>,
     selected_index: usize,
     hovered_index: Option<usize>,
-    current_shell: Option<String>,
+    current_shell: Option<ShellConfig>,
     app_event_tx: AppEventSender,
     is_complete: bool,
     custom_input_mode: bool,
@@ -38,7 +39,7 @@ pub(crate) struct ShellSelectionView {
 
 impl ShellSelectionView {
     pub fn new(
-        current_shell: Option<String>,
+        current_shell: Option<ShellConfig>,
         presets: Vec<ShellPreset>,
         app_event_tx: AppEventSender,
     ) -> Self {
@@ -54,7 +55,7 @@ impl ShellSelectionView {
         let initial_index = if let Some(ref current) = current_shell {
             shells
                 .iter()
-                .position(|s| current.contains(&s.preset.command))
+                .position(|s| Self::current_matches_preset(current, &s.preset))
                 .unwrap_or(0)
         } else {
             0
@@ -71,6 +72,31 @@ impl ShellSelectionView {
             custom_input: String::new(),
             item_rects: RefCell::new(Vec::new()),
             custom_rect: RefCell::new(None),
+        }
+    }
+
+    fn current_matches_preset(current: &ShellConfig, preset: &ShellPreset) -> bool {
+        Self::normalized_command_name(&current.path) == Self::normalized_command_name(&preset.command)
+    }
+
+    fn normalized_command_name(command: &str) -> String {
+        let raw = command
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(command)
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_ascii_lowercase();
+        raw.strip_suffix(".exe").unwrap_or(raw.as_str()).to_string()
+    }
+
+    fn display_shell(shell: &ShellConfig) -> String {
+        if shell.args.is_empty() {
+            shell.path.clone()
+        } else {
+            let path = &shell.path;
+            let args = shell.args.join(" ");
+            format!("{path} {args}")
         }
     }
 
@@ -110,6 +136,7 @@ impl ShellSelectionView {
             let _ = self.app_event_tx.send(AppEvent::UpdateShellSelection {
                 path: shell.preset.command.clone(),
                 args: shell.preset.default_args.clone(),
+                script_style: shell.preset.script_style.clone(),
             });
             self.send_closed(true);
         }
@@ -124,6 +151,7 @@ impl ShellSelectionView {
         let _ = self.app_event_tx.send(AppEvent::UpdateShellSelection {
             path,
             args: vec![],
+            script_style: None,
         });
         self.send_closed(true);
     }
@@ -294,10 +322,11 @@ impl ShellSelectionView {
 
         // Show current shell if set
         if let Some(ref current) = self.current_shell {
+            let current_label = Self::display_shell(current);
             lines.push(Line::from(vec![
                 Span::styled("Current: ", Style::default()),
                 Span::styled(
-                    current,
+                    current_label,
                     Style::default().fg(colors::text_bright()).add_modifier(Modifier::BOLD),
                 ),
             ]));
@@ -376,5 +405,54 @@ impl ShellSelectionView {
 
         let para = Paragraph::new(lines).alignment(Alignment::Left);
         para.render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn preset(command: &str) -> ShellPreset {
+        ShellPreset {
+            id: command.to_string(),
+            command: command.to_string(),
+            display_name: command.to_string(),
+            description: String::new(),
+            default_args: Vec::new(),
+            script_style: None,
+            show_in_picker: true,
+        }
+    }
+
+    fn shell(path: &str) -> ShellConfig {
+        ShellConfig {
+            path: path.to_string(),
+            args: Vec::new(),
+            script_style: None,
+        }
+    }
+
+    #[test]
+    fn matches_termux_bash_path_to_bash_preset() {
+        assert!(ShellSelectionView::current_matches_preset(
+            &shell("/data/data/com.termux/files/usr/bin/bash"),
+            &preset("bash"),
+        ));
+    }
+
+    #[test]
+    fn does_not_match_unrelated_basename() {
+        assert!(!ShellSelectionView::current_matches_preset(
+            &shell("/usr/bin/bashful"),
+            &preset("bash"),
+        ));
+    }
+
+    #[test]
+    fn matches_windows_exe_suffix() {
+        assert!(ShellSelectionView::current_matches_preset(
+            &shell("C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
+            &preset("pwsh"),
+        ));
     }
 }

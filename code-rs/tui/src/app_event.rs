@@ -1,4 +1,5 @@
 use code_core::config_types::ReasoningEffort;
+use code_core::config_types::ShellConfig;
 use code_core::config_types::TextVerbosity;
 use code_core::config_types::ThemeName;
 use code_core::protocol::Event;
@@ -335,6 +336,19 @@ pub(crate) enum AppEvent {
     UpdateShellSelection {
         path: String,
         args: Vec<String>,
+        script_style: Option<String>,
+    },
+
+    /// Shell setting persisted successfully.
+    ShellPersisted {
+        shell: Option<ShellConfig>,
+    },
+
+    /// Shell setting persistence failed; UI should report and possibly roll back.
+    ShellPersistFailed {
+        attempted_shell: Option<ShellConfig>,
+        previous_shell: Option<ShellConfig>,
+        error: String,
     },
 
     /// Shell selection UI closed

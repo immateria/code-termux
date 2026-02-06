@@ -171,14 +171,7 @@ impl App<'_> {
                             placement,
                             message.len()
                         );
-
-                        // Special message used to instruct the widget to restore a
-                        // previous shell value when persistence failed.
-                        if let Some(rest) = message.strip_prefix("__restore_shell__:") {
-                            widget.restore_shell_from_string(rest);
-                        } else {
-                            widget.insert_background_event_with_placement(message, placement, order);
-                        }
+                        widget.insert_background_event_with_placement(message, placement, order);
                     }
                     AppState::Onboarding { .. } => {}
                 },
@@ -1474,9 +1467,27 @@ impl App<'_> {
                         widget.apply_model_selection(model, effort);
                     }
                 }
-                AppEvent::UpdateShellSelection { path, args } => {
+                AppEvent::UpdateShellSelection {
+                    path,
+                    args,
+                    script_style,
+                } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
-                        widget.apply_shell_selection(path, args);
+                        widget.apply_shell_selection(path, args, script_style);
+                    }
+                }
+                AppEvent::ShellPersisted { shell } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.on_shell_persisted(shell);
+                    }
+                }
+                AppEvent::ShellPersistFailed {
+                    attempted_shell,
+                    previous_shell,
+                    error,
+                } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.on_shell_persist_failed(attempted_shell, previous_shell, error);
                     }
                 }
                 AppEvent::ShellSelectionClosed { confirmed } => {

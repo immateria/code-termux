@@ -286,6 +286,11 @@ pub async fn persist_shell(code_home: &Path, shell: Option<&ShellConfig>) -> any
             } else {
                 shell_table.remove("args");
             }
+            if let Some(style) = shell_config.script_style {
+                shell_table["script_style"] = toml_edit::value(style.to_string());
+            } else {
+                shell_table.remove("script_style");
+            }
         } else {
             root.remove("shell");
         }

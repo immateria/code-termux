@@ -31,7 +31,8 @@ use code_common::elapsed::format_duration;
 use code_common::model_presets::builtin_model_presets;
 use code_common::model_presets::clamp_reasoning_effort_for_model;
 use code_common::model_presets::ModelPreset;
-use code_common::shell_presets::builtin_shell_presets;
+use code_common::shell_presets::merge_shell_presets;
+use code_common::shell_presets::ShellPreset;
 use code_core::agent_defaults::{agent_model_spec, enabled_agent_model_specs};
 use code_core::smoke_test_agent_blocking;
 use code_core::config::Config;
@@ -42,6 +43,8 @@ use code_core::config_types::AutoDriveContinueMode;
 use code_core::config_types::Notifications;
 use code_core::config_types::ReasoningEffort;
 use code_core::config_types::ShellConfig;
+use code_core::config_types::ShellPresetConfig;
+use code_core::config_types::ShellScriptStyle;
 use code_core::config_types::TextVerbosity;
 use code_core::spawn::spawn_std_command_with_retry;
 use code_core::plan_tool::{PlanItemArg, StepStatus, UpdatePlanArgs};
@@ -16696,126 +16699,235 @@ impl ChatWidget<'_> {
     pub(crate) fn handle_shell_command(&mut self, args: String) {
         let args = args.trim();
         if args.is_empty() {
-            // Show shell selector instead of just printing current shell
-            let current_shell = self.config.shell.as_ref().map(|s| {
-                format!("{} {}", s.path, s.args.join(" ")).trim().to_string()
-            });
             // Check if shell selector is already open
             if self.bottom_pane.is_view_kind_active(crate::bottom_pane::ActiveViewKind::ShellSelection) {
                 return;
             }
-            self.bottom_pane.show_shell_selection(current_shell, builtin_shell_presets());
+            self.bottom_pane
+                .show_shell_selection(self.config.shell.clone(), self.available_shell_presets());
             return;
         }
-        
+
         if args == "?" {
-            let current_shell = match &self.config.shell {
-                Some(shell) => format!("{} {}", shell.path, shell.args.join(" ")).trim().to_string(),
-                None => "auto-detected".to_string(),
-            };
-            self.history_push_plain_paragraphs(crate::history::state::PlainMessageKind::Notice, vec![format!("Current shell: {}", current_shell)]);
-        } else {
-            let shell_config = if args == "-" || args.eq_ignore_ascii_case("clear") {
-                None
-            } else {
-                // Parse the args as shell command line
-                match shlex::split(args) {
-                    Some(mut parts) if !parts.is_empty() => {
-                        let path = parts.remove(0);
-                        Some(ShellConfig { path, args: parts })
-                    }
-                    _ => None,
-                }
-            };
-            let code_home = self.config.code_home.clone();
-            let tx = self.app_event_tx.clone();
-            let shell_label = shell_config.clone();
-
-            // Update the in-memory config immediately so the header reflects the
-            // user's change while persistence happens in the background.
-            let previous_shell = self.config.shell.clone();
-            self.config.shell = shell_config.clone();
-            self.request_redraw();
-
-            // Send ConfigureSession to update the backend session's user_shell
-            let op = Op::ConfigureSession {
-                provider: self.config.model_provider.clone(),
-                model: self.config.model.clone(),
-                model_explicit: self.config.model_explicit,
-                model_reasoning_effort: self.config.model_reasoning_effort,
-                preferred_model_reasoning_effort: self.config.preferred_model_reasoning_effort,
-                model_reasoning_summary: self.config.model_reasoning_summary,
-                model_text_verbosity: self.config.model_text_verbosity,
-                user_instructions: self.config.user_instructions.clone(),
-                base_instructions: self.config.base_instructions.clone(),
-                approval_policy: self.config.approval_policy.clone(),
-                sandbox_policy: self.config.sandbox_policy.clone(),
-                disable_response_storage: self.config.disable_response_storage,
-                notify: self.config.notify.clone(),
-                cwd: self.config.cwd.clone(),
-                resume_path: None,
-                demo_developer_message: self.config.demo_developer_message.clone(),
-                dynamic_tools: Vec::new(),
-                shell: self.config.shell.clone(),
-            };
-            self.submit_op(op);
-
-            tokio::spawn(async move {
-                match persist_shell(&code_home, shell_config.as_ref()).await {
-                    Ok(()) => {
-                        let message = match shell_label {
-                            Some(config) => format!("Shell set to: {} {}", config.path, config.args.join(" ")).trim().to_string(),
-                            None => "Shell setting cleared.".to_string(),
-                        };
-                        let _ = tx.send(AppEvent::InsertBackgroundEvent {
-                            message,
-                            placement: crate::app_event::BackgroundPlacement::Tail,
-                            order: None,
-                        });
-                    }
-                    Err(err) => {
-                        // If persistence failed, send an error message and restore the previous value
-                        let message = format!("Failed to persist shell setting: {}", err);
-                        let _ = tx.send(AppEvent::InsertBackgroundEvent {
-                            message: message.clone(),
-                            placement: crate::app_event::BackgroundPlacement::Tail,
-                            order: None,
-                        });
-
-                        // Try to restore previous shell by sending a background event that
-                        // the main loop can interpret to update state. We reuse the same
-                        // background event channel to avoid adding a new AppEvent variant.
-                        // Note: The actual restore will be done on the main thread to avoid
-                        // concurrency issues; send a special message payload.
-                        let _ = tx.send(AppEvent::InsertBackgroundEvent {
-                            message: format!("__restore_shell__:{}", previous_shell.as_ref().map(|s| format!("{} {}", s.path, s.args.join(" "))).unwrap_or_else(||"__NONE__".to_string())),
-                            placement: crate::app_event::BackgroundPlacement::Tail,
-                            order: None,
-                        });
-                    }
-                }
-            });
-            self.history_push_plain_paragraphs(crate::history::state::PlainMessageKind::Notice, vec!["Updating shell setting...".to_string()]);
-        }
-    }
-
-    pub(crate) fn set_shell_config(&mut self, shell: Option<ShellConfig>) {
-        self.config.shell = shell;
-        self.request_redraw();
-    }
-
-    pub(crate) fn restore_shell_from_string(&mut self, s: &str) {
-        if s == "__NONE__" {
-            self.set_shell_config(None);
+            let current_shell = self
+                .config
+                .shell
+                .as_ref()
+                .map(Self::format_shell_config)
+                .unwrap_or_else(|| "auto-detected".to_string());
+            self.history_push_plain_paragraphs(
+                crate::history::state::PlainMessageKind::Notice,
+                vec![format!("Current shell: {current_shell}")],
+            );
             return;
         }
-        if let Some(parts) = shlex::split(s) {
-            if !parts.is_empty() {
-                let path = parts[0].clone();
-                let args = parts[1..].to_vec();
-                self.set_shell_config(Some(ShellConfig { path, args }));
+
+        let shell_config = match Self::parse_shell_command_override(args, self.config.shell.as_ref()) {
+            Ok(shell_config) => shell_config,
+            Err(error) => {
+                self.history_push_plain_state(history_cell::new_error_event(format!(
+                    "Invalid /shell value: {error}",
+                )));
+                return;
             }
+        };
+
+        self.update_shell_config(shell_config);
+        self.history_push_plain_paragraphs(
+            crate::history::state::PlainMessageKind::Notice,
+            vec!["Updating shell setting...".to_string()],
+        );
+    }
+
+    fn available_shell_presets(&self) -> Vec<ShellPreset> {
+        let user_presets: Vec<ShellPreset> = self
+            .config
+            .tui
+            .shell_presets
+            .iter()
+            .filter_map(Self::shell_preset_from_config)
+            .collect();
+        merge_shell_presets(user_presets)
+    }
+
+    fn shell_preset_from_config(preset: &ShellPresetConfig) -> Option<ShellPreset> {
+        let id = preset.id.trim();
+        let command = preset.command.trim();
+        if id.is_empty() || command.is_empty() {
+            return None;
         }
+
+        let display_name = if preset.display_name.trim().is_empty() {
+            command.to_string()
+        } else {
+            preset.display_name.trim().to_string()
+        };
+
+        Some(ShellPreset {
+            id: id.to_string(),
+            command: command.to_string(),
+            display_name,
+            description: preset.description.trim().to_string(),
+            default_args: preset.default_args.clone(),
+            script_style: preset.script_style.map(|style| style.to_string()),
+            show_in_picker: preset.show_in_picker,
+        })
+    }
+
+    fn parse_shell_command_override(
+        input: &str,
+        current_shell: Option<&ShellConfig>,
+    ) -> Result<Option<ShellConfig>, String> {
+        if input == "-" || input.eq_ignore_ascii_case("clear") {
+            return Ok(None);
+        }
+
+        let Some(mut parts) = shlex::split(input) else {
+            return Err("could not parse command (check quoting)".to_string());
+        };
+
+        let mut explicit_style: Option<ShellScriptStyle> = None;
+        if parts.first().map(String::as_str) == Some("--style") {
+            if parts.len() < 2 {
+                return Err("missing value after --style".to_string());
+            }
+            let style_value = parts.remove(1);
+            parts.remove(0);
+            explicit_style = Some(
+                ShellScriptStyle::parse(style_value.as_str())
+                    .ok_or_else(|| {
+                        format!(
+                            "unknown style `{style_value}` (expected one of: posix-sh, bash-zsh-compatible, zsh)",
+                        )
+                    })?,
+            );
+        }
+
+        if parts.is_empty() {
+            let Some(existing_shell) = current_shell else {
+                return Err("missing shell executable".to_string());
+            };
+            let mut shell = existing_shell.clone();
+            if let Some(style) = explicit_style {
+                shell.script_style = Some(style);
+            }
+            return Ok(Some(shell));
+        }
+
+        let path = parts.remove(0);
+        let script_style = explicit_style.or_else(|| ShellScriptStyle::infer_from_shell_program(&path));
+        Ok(Some(ShellConfig {
+            path,
+            args: parts,
+            script_style,
+        }))
+    }
+
+    fn format_shell_config(shell: &ShellConfig) -> String {
+        if shell.args.is_empty() {
+            shell.path.clone()
+        } else {
+            let path = &shell.path;
+            let args = shell.args.join(" ");
+            format!("{path} {args}")
+        }
+    }
+
+    fn submit_configure_session_for_current_settings(&self) {
+        let op = Op::ConfigureSession {
+            provider: self.config.model_provider.clone(),
+            model: self.config.model.clone(),
+            model_explicit: self.config.model_explicit,
+            model_reasoning_effort: self.config.model_reasoning_effort,
+            preferred_model_reasoning_effort: self.config.preferred_model_reasoning_effort,
+            model_reasoning_summary: self.config.model_reasoning_summary,
+            model_text_verbosity: self.config.model_text_verbosity,
+            user_instructions: self.config.user_instructions.clone(),
+            base_instructions: self.config.base_instructions.clone(),
+            approval_policy: self.config.approval_policy.clone(),
+            sandbox_policy: self.config.sandbox_policy.clone(),
+            disable_response_storage: self.config.disable_response_storage,
+            notify: self.config.notify.clone(),
+            cwd: self.config.cwd.clone(),
+            resume_path: None,
+            demo_developer_message: self.config.demo_developer_message.clone(),
+            dynamic_tools: Vec::new(),
+            shell: self.config.shell.clone(),
+        };
+        self.submit_op(op);
+    }
+
+    fn persist_shell_config(
+        &self,
+        attempted_shell: Option<ShellConfig>,
+        previous_shell: Option<ShellConfig>,
+    ) {
+        let code_home = self.config.code_home.clone();
+        let tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            match persist_shell(&code_home, attempted_shell.as_ref()).await {
+                Ok(()) => {
+                    let _ = tx.send(AppEvent::ShellPersisted {
+                        shell: attempted_shell,
+                    });
+                }
+                Err(error) => {
+                    let _ = tx.send(AppEvent::ShellPersistFailed {
+                        attempted_shell,
+                        previous_shell,
+                        error: error.to_string(),
+                    });
+                }
+            }
+        });
+    }
+
+    fn update_shell_config(&mut self, shell: Option<ShellConfig>) {
+        let previous_shell = self.config.shell.clone();
+        self.config.shell = shell.clone();
+        self.request_redraw();
+        self.submit_configure_session_for_current_settings();
+        self.persist_shell_config(shell, previous_shell);
+    }
+
+    pub(crate) fn on_shell_persisted(&mut self, shell: Option<ShellConfig>) {
+        if self.config.shell != shell {
+            return;
+        }
+
+        let message = match shell.as_ref() {
+            Some(shell) => {
+                let label = Self::format_shell_config(shell);
+                format!("Shell set to: {label}")
+            }
+            None => "Shell setting cleared.".to_string(),
+        };
+        self.push_background_tail(message);
+    }
+
+    pub(crate) fn on_shell_persist_failed(
+        &mut self,
+        attempted_shell: Option<ShellConfig>,
+        previous_shell: Option<ShellConfig>,
+        error: String,
+    ) {
+        if self.config.shell != attempted_shell {
+            return;
+        }
+
+        self.push_background_tail(format!("Failed to persist shell setting: {error}"));
+        self.config.shell = previous_shell;
+        self.request_redraw();
+        self.submit_configure_session_for_current_settings();
+
+        let restored = match self.config.shell.as_ref() {
+            Some(shell) => {
+                let label = Self::format_shell_config(shell);
+                format!("Restored previous shell: {label}")
+            }
+            None => "Restored previous shell: auto-detected".to_string(),
+        };
+        self.push_background_tail(restored);
     }
 
     pub(crate) fn handle_login_command(&mut self) {
@@ -22734,62 +22846,22 @@ Have we met every part of this goal and is there no further work to do?"#
         self.apply_model_selection_inner(model, effort, true, true);
     }
 
-    pub(crate) fn apply_shell_selection(&mut self, path: String, args: Vec<String>) {
-        use code_core::config_types::ShellConfig;
-        use code_core::config::persist_shell;
-        
-        let shell_config = ShellConfig { path, args };
-        let code_home = self.config.code_home.clone();
-        let tx = self.app_event_tx.clone();
-        let shell_label = shell_config.clone();
-
-        // Update the in-memory config immediately
-        self.config.shell = Some(shell_config.clone());
-        self.request_redraw();
-
-        // Send ConfigureSession to update the backend session's user_shell
-        let op = Op::ConfigureSession {
-            provider: self.config.model_provider.clone(),
-            model: self.config.model.clone(),
-            model_explicit: self.config.model_explicit,
-            model_reasoning_effort: self.config.model_reasoning_effort,
-            preferred_model_reasoning_effort: self.config.preferred_model_reasoning_effort,
-            model_reasoning_summary: self.config.model_reasoning_summary,
-            model_text_verbosity: self.config.model_text_verbosity,
-            user_instructions: self.config.user_instructions.clone(),
-            base_instructions: self.config.base_instructions.clone(),
-            approval_policy: self.config.approval_policy.clone(),
-            sandbox_policy: self.config.sandbox_policy.clone(),
-            disable_response_storage: self.config.disable_response_storage,
-            notify: self.config.notify.clone(),
-            cwd: self.config.cwd.clone(),
-            resume_path: None,
-            demo_developer_message: self.config.demo_developer_message.clone(),
-            dynamic_tools: Vec::new(),
-            shell: self.config.shell.clone(),
+    pub(crate) fn apply_shell_selection(
+        &mut self,
+        path: String,
+        args: Vec<String>,
+        script_style: Option<String>,
+    ) {
+        let parsed_style = script_style
+            .as_deref()
+            .and_then(ShellScriptStyle::parse)
+            .or_else(|| ShellScriptStyle::infer_from_shell_program(&path));
+        let shell_config = ShellConfig {
+            path,
+            args,
+            script_style: parsed_style,
         };
-        self.submit_op(op);
-
-        // Persist in background
-        tokio::spawn(async move {
-            match persist_shell(&code_home, Some(&shell_config)).await {
-                Ok(()) => {
-                    let message = format!("Shell set to: {} {}", shell_label.path, shell_label.args.join(" ")).trim().to_string();
-                    let _ = tx.send(AppEvent::InsertBackgroundEvent {
-                        message,
-                        placement: crate::app_event::BackgroundPlacement::Tail,
-                        order: None,
-                    });
-                }
-                Err(e) => {
-                    let _ = tx.send(AppEvent::InsertBackgroundEvent {
-                        message: format!("Failed to persist shell setting: {}", e),
-                        placement: crate::app_event::BackgroundPlacement::Tail,
-                        order: None,
-                    });
-                }
-            }
-        });
+        self.update_shell_config(Some(shell_config));
     }
 
     pub(crate) fn on_shell_selection_closed(&mut self, confirmed: bool) {
@@ -22806,10 +22878,8 @@ Have we met every part of this goal and is there no further work to do?"#
         if self.bottom_pane.is_view_kind_active(crate::bottom_pane::ActiveViewKind::ShellSelection) {
             return;
         }
-        let current_shell = self.config.shell.as_ref().map(|s| {
-            format!("{} {}", s.path, s.args.join(" ")).trim().to_string()
-        });
-        self.bottom_pane.show_shell_selection(current_shell, builtin_shell_presets());
+        self.bottom_pane
+            .show_shell_selection(self.config.shell.clone(), self.available_shell_presets());
     }
 
     fn clamp_reasoning_for_model_from_presets(
