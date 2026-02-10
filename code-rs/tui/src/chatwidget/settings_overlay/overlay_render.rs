@@ -292,7 +292,7 @@ impl SettingsOverlayView {
                 let label_trim = label.trim_end();
                 let value_trim = value.trim_start();
                 line.spans
-                    .push(Span::styled(format!("{}:", label_trim), label_style));
+                    .push(Span::styled(format!("{label_trim}:"), label_style));
                 if !value_trim.is_empty() {
                     line.spans.push(Span::styled(" ".to_string(), dim_style));
                     let value_style = self.summary_value_style(value_trim);
@@ -310,7 +310,7 @@ impl SettingsOverlayView {
     fn summary_value_style(&self, value: &str) -> Style {
         let trimmed = value.trim();
         let normalized = trimmed
-            .trim_end_matches(|c: char| matches!(c, '.' | '!' | ','))
+            .trim_end_matches(['.', '!', ','])
             .to_ascii_lowercase();
         if matches!(normalized.as_str(), "on" | "enabled" | "yes") {
             Style::default().fg(crate::colors::success())

@@ -53,9 +53,9 @@ fn format_elapsed_short(duration: Duration) -> String {
     let minutes = secs / 60;
     let seconds = secs % 60;
     if minutes > 0 {
-        format!("{}m{:02}s", minutes, seconds)
+        format!("{minutes}m{seconds:02}s")
     } else {
-        format!("{:02}s", seconds)
+        format!("{seconds:02}s")
     }
 }
 
@@ -65,7 +65,7 @@ fn begin_action_for(tool_name: &str, metadata: &InvocationMetadata) -> Option<St
         .clone()
         .or_else(|| metadata.agent_ids.clone().into_iter().next())
         .unwrap_or_else(|| "agent".to_string());
-    let action = metadata.action.as_deref().unwrap_or_else(|| match tool_name {
+    let action = metadata.action.as_deref().unwrap_or(match tool_name {
         "agent" | "agent_run" => "create",
         "agent_wait" => "wait",
         "agent_result" => "result",
@@ -76,11 +76,11 @@ fn begin_action_for(tool_name: &str, metadata: &InvocationMetadata) -> Option<St
     });
 
     match action {
-        "create" => Some(format!("Started agent run for {}", label)),
+        "create" => Some(format!("Started agent run for {label}")),
         "wait" => Some("Waiting for agents".to_string()),
-        "result" => Some(format!("Requested results for {}", label)),
-        "cancel" => Some(format!("Cancelling agent batch for {}", label)),
-        "status" => Some(format!("Checking agent status for {}", label)),
+        "result" => Some(format!("Requested results for {label}")),
+        "cancel" => Some(format!("Cancelling agent batch for {label}")),
+        "status" => Some(format!("Checking agent status for {label}")),
         "list" => Some("Listing available agents".to_string()),
         _ => None,
     }
@@ -94,7 +94,7 @@ fn end_action_for(
     message: Option<&str>,
 ) -> Option<String> {
     let elapsed = format_elapsed_short(duration);
-    let action = metadata.action.as_deref().unwrap_or_else(|| match tool_name {
+    let action = metadata.action.as_deref().unwrap_or(match tool_name {
         "agent" | "agent_run" => "create",
         "agent_wait" => "wait",
         "agent_result" => "result",
@@ -110,7 +110,7 @@ fn end_action_for(
                 None
             } else {
                 let detail = message.unwrap_or("unknown error");
-                Some(format!("Agent run failed in {} — {}", elapsed, detail))
+                Some(format!("Agent run failed in {elapsed} — {detail}"))
             }
         }
         "wait" => {
@@ -118,7 +118,7 @@ fn end_action_for(
                 None
             } else {
                 let detail = message.unwrap_or("wait failed");
-                Some(format!("Wait failed in {} — {}", elapsed, detail))
+                Some(format!("Wait failed in {elapsed} — {detail}"))
             }
         }
         "result" => {
@@ -126,11 +126,11 @@ fn end_action_for(
                 None
             } else {
                 let detail = message.unwrap_or("result error");
-                Some(format!("Result fetch failed in {} — {}", elapsed, detail))
+                Some(format!("Result fetch failed in {elapsed} — {detail}"))
             }
         }
-        "cancel" => Some(format!("Cancel request completed in {}", elapsed)),
-        "status" => Some(format!("Status check finished in {}", elapsed)),
+        "cancel" => Some(format!("Cancel request completed in {elapsed}")),
+        "status" => Some(format!("Status check finished in {elapsed}")),
         "list" => Some("Listed agents".to_string()),
         _ => None,
     }
@@ -145,8 +145,8 @@ fn friendly_agent_names(metadata: &InvocationMetadata, tracker: &AgentRunTracker
             names.push(id.clone());
         }
     }
-    if names.is_empty() {
-        if let Some(label) = metadata
+    if names.is_empty()
+        && let Some(label) = metadata
             .label
             .as_ref()
             .and_then(|value| clean_label(value))
@@ -154,7 +154,6 @@ fn friendly_agent_names(metadata: &InvocationMetadata, tracker: &AgentRunTracker
         {
             names.push(label);
         }
-    }
     names.sort_unstable();
     names.dedup();
     names
@@ -206,7 +205,7 @@ fn normalize_begin_action_text(
                 .and_then(|value| clean_label(value))
                 .filter(|value| !looks_like_uuid(value))
             {
-                return Some(format!("Started agent run for {}", label));
+                return Some(format!("Started agent run for {label}"));
             }
             return Some(action);
         }
@@ -337,12 +336,11 @@ impl AgentRunTracker {
     }
 
     fn set_agent_name(&mut self, name: Option<String>, override_existing: bool) {
-        if let Some(name) = name {
-            if override_existing || !self.has_custom_name {
+        if let Some(name) = name
+            && (override_existing || !self.has_custom_name) {
                 self.cell.set_agent_name(name);
                 self.has_custom_name = true;
             }
-        }
     }
 
     fn set_write_mode(&mut self, write_flag: Option<bool>) {
@@ -357,7 +355,7 @@ impl AgentRunTracker {
             .effective_label()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .or_else(|| self.batch_id.as_ref().map(|value| value.to_string()))
+            .or_else(|| self.batch_id.as_ref().map(std::string::ToString::to_string))
     }
 
     pub(crate) fn overlay_task(&self) -> Option<String> {
@@ -384,7 +382,7 @@ impl AgentRunTracker {
 }
 
 fn agent_batch_key(batch_id: &str) -> String {
-    format!("batch:{}", batch_id)
+    format!("batch:{batch_id}")
 }
 
 fn short_batch_id(batch_id: &str) -> String {
@@ -485,21 +483,18 @@ fn report_missing_batch(
     );
 
     let mut message = format!("⚠️ {context}: missing agent batch_id.");
-    if let Some(tool) = tool_name {
-        if !tool.is_empty() {
+    if let Some(tool) = tool_name
+        && !tool.is_empty() {
             message.push_str(&format!(" tool={tool}"));
         }
-    }
-    if let Some(cid) = call_id {
-        if !cid.is_empty() {
+    if let Some(cid) = call_id
+        && !cid.is_empty() {
             message.push_str(&format!(" call_id={cid}"));
         }
-    }
-    if let Some(detail) = extra {
-        if !detail.is_empty() {
+    if let Some(detail) = extra
+        && !detail.is_empty() {
             message.push_str(&format!(" {detail}"));
         }
-    }
 
     let state = plain_message_state_from_paragraphs(
         PlainMessageKind::Error,
@@ -535,10 +530,10 @@ impl InvocationMetadata {
             if let Some(batch) = map.get("batch_id").and_then(|v| v.as_str()) {
                 meta.batch_id = Some(batch.to_string());
             }
-            if let Some(write_flag) = map.get("write").and_then(|v| v.as_bool()) {
+            if let Some(write_flag) = map.get("write").and_then(serde_json::Value::as_bool) {
                 meta.write = Some(write_flag);
             }
-            if let Some(ro_flag) = map.get("read_only").and_then(|v| v.as_bool()) {
+            if let Some(ro_flag) = map.get("read_only").and_then(serde_json::Value::as_bool) {
                 meta.read_only = Some(ro_flag);
             }
             if let Some(agent_id) = map.get("agent_id").and_then(|v| v.as_str()) {
@@ -556,7 +551,7 @@ impl InvocationMetadata {
             if let Some(plan) = map.get("plan").and_then(|v| v.as_array()) {
                 meta.plan = plan
                     .iter()
-                    .filter_map(|step| step.as_str().map(|s| s.to_string()))
+                    .filter_map(|step| step.as_str().map(std::string::ToString::to_string))
                     .collect();
             }
             if let Some(models) = map.get("models").and_then(|v| v.as_array()) {
@@ -572,116 +567,101 @@ impl InvocationMetadata {
                         if let Some(id) = obj.get("id").and_then(|v| v.as_str()) {
                             meta.agent_ids.push(id.to_string());
                         }
-                        if meta.label.is_none() {
-                            if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
+                        if meta.label.is_none()
+                            && let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
                                 meta.label = Some(name.to_string());
                             }
-                        }
                         if let Some(model) = obj.get("model").and_then(|v| v.as_str()) {
                             meta.models.push(model.to_string());
                         }
                         if let Some(backend) = obj.get("backend").and_then(|v| v.as_str()) {
                             meta.models.push(backend.to_string());
                         }
-                        if meta.write.is_none() {
-                            if let Some(write_flag) = obj.get("write").and_then(|v| v.as_bool()) {
+                        if meta.write.is_none()
+                            && let Some(write_flag) = obj.get("write").and_then(serde_json::Value::as_bool) {
                                 meta.write = Some(write_flag);
                             }
-                        }
-                        if meta.read_only.is_none() {
-                            if let Some(ro_flag) = obj.get("read_only").and_then(|v| v.as_bool()) {
+                        if meta.read_only.is_none()
+                            && let Some(ro_flag) = obj.get("read_only").and_then(serde_json::Value::as_bool) {
                                 meta.read_only = Some(ro_flag);
                             }
-                        }
                     }
                 }
             }
             if let Some(create) = map.get("create").and_then(|v| v.as_object()) {
-                if meta.task.is_none() {
-                    if let Some(task) = create.get("task").and_then(|v| v.as_str()) {
+                if meta.task.is_none()
+                    && let Some(task) = create.get("task").and_then(|v| v.as_str()) {
                         meta.task = Some(task.to_string());
                     }
-                }
                 if let Some(name) = create.get("name").and_then(|v| v.as_str()) {
                     meta.label = Some(name.to_string());
                 }
-                if meta.context.is_none() {
-                    if let Some(context) = create.get("context").and_then(|v| v.as_str()) {
+                if meta.context.is_none()
+                    && let Some(context) = create.get("context").and_then(|v| v.as_str()) {
                         meta.context = Some(context.to_string());
                     }
-                }
-                if meta.write.is_none() {
-                    if let Some(write_flag) = create.get("write").and_then(|v| v.as_bool()) {
+                if meta.write.is_none()
+                    && let Some(write_flag) = create.get("write").and_then(serde_json::Value::as_bool) {
                         meta.write = Some(write_flag);
                     }
-                }
-                if meta.read_only.is_none() {
-                    if let Some(ro_flag) = create.get("read_only").and_then(|v| v.as_bool()) {
+                if meta.read_only.is_none()
+                    && let Some(ro_flag) = create.get("read_only").and_then(serde_json::Value::as_bool) {
                         meta.read_only = Some(ro_flag);
                     }
-                }
-                if meta.plan.is_empty() {
-                    if let Some(plan) = create.get("plan").and_then(|v| v.as_array()) {
+                if meta.plan.is_empty()
+                    && let Some(plan) = create.get("plan").and_then(|v| v.as_array()) {
                         meta.plan = plan
                             .iter()
-                            .filter_map(|step| step.as_str().map(|s| s.to_string()))
+                            .filter_map(|step| step.as_str().map(std::string::ToString::to_string))
                             .collect();
                     }
-                }
             }
             if let Some(wait) = map.get("wait").and_then(|v| v.as_object()) {
-                if meta.batch_id.is_none() {
-                    if let Some(batch) = wait.get("batch_id").and_then(|v| v.as_str()) {
+                if meta.batch_id.is_none()
+                    && let Some(batch) = wait.get("batch_id").and_then(|v| v.as_str()) {
                         meta.batch_id = Some(batch.to_string());
                     }
-                }
                 if let Some(agent_id) = wait.get("agent_id").and_then(|v| v.as_str()) {
                     meta.agent_ids.push(agent_id.to_string());
                 }
             }
             if let Some(status) = map.get("status").and_then(|v| v.as_object()) {
-                if meta.batch_id.is_none() {
-                    if let Some(batch) = status.get("batch_id").and_then(|v| v.as_str()) {
+                if meta.batch_id.is_none()
+                    && let Some(batch) = status.get("batch_id").and_then(|v| v.as_str()) {
                         meta.batch_id = Some(batch.to_string());
                     }
-                }
                 if let Some(agent_id) = status.get("agent_id").and_then(|v| v.as_str()) {
                     meta.agent_ids.push(agent_id.to_string());
                 }
             }
             if let Some(result) = map.get("result").and_then(|v| v.as_object()) {
-                if meta.batch_id.is_none() {
-                    if let Some(batch) = result.get("batch_id").and_then(|v| v.as_str()) {
+                if meta.batch_id.is_none()
+                    && let Some(batch) = result.get("batch_id").and_then(|v| v.as_str()) {
                         meta.batch_id = Some(batch.to_string());
                     }
-                }
                 if let Some(agent_id) = result.get("agent_id").and_then(|v| v.as_str()) {
                     meta.agent_ids.push(agent_id.to_string());
                 }
             }
             if let Some(cancel) = map.get("cancel").and_then(|v| v.as_object()) {
-                if meta.batch_id.is_none() {
-                    if let Some(batch) = cancel.get("batch_id").and_then(|v| v.as_str()) {
+                if meta.batch_id.is_none()
+                    && let Some(batch) = cancel.get("batch_id").and_then(|v| v.as_str()) {
                         meta.batch_id = Some(batch.to_string());
                     }
-                }
                 if let Some(agent_id) = cancel.get("agent_id").and_then(|v| v.as_str()) {
                     meta.agent_ids.push(agent_id.to_string());
                 }
             }
-            if let Some(list) = map.get("list").and_then(|v| v.as_object()) {
-                if meta.batch_id.is_none() {
-                    if let Some(batch) = list.get("batch_id").and_then(|v| v.as_str()) {
+            if let Some(list) = map.get("list").and_then(|v| v.as_object())
+                && meta.batch_id.is_none()
+                    && let Some(batch) = list.get("batch_id").and_then(|v| v.as_str()) {
                         meta.batch_id = Some(batch.to_string());
                     }
-                }
-            }
         }
-        if meta.label.is_none() {
-            if let Some(first) = meta.agent_ids.first() {
+        if meta.label.is_none()
+            && let Some(first) = meta.agent_ids.first() {
                 meta.label = Some(first.clone());
             }
-        }
         meta.agent_ids = dedup(meta.agent_ids);
         meta.models = dedup(meta.models);
         if meta.plan.is_empty() && is_primary_run_tool(tool_name) {
@@ -693,11 +673,7 @@ impl InvocationMetadata {
     fn resolved_write_flag(&self) -> Option<bool> {
         if let Some(flag) = self.write {
             Some(flag)
-        } else if let Some(ro_flag) = self.read_only {
-            Some(!ro_flag)
-        } else {
-            None
-        }
+        } else { self.read_only.map(|ro_flag| !ro_flag) }
     }
 }
 
@@ -731,7 +707,9 @@ pub(super) fn handle_custom_tool_begin(
     }
 
     let (order_key, ordinal) = order_key_and_ordinal(chat, order);
-    let batch = metadata.batch_id.as_ref().expect("batch id required");
+    let Some(batch) = metadata.batch_id.as_ref() else {
+        return true;
+    };
 
     let (mut tracker, resolved_key) = match chat
         .tools_state
@@ -747,20 +725,19 @@ pub(super) fn handle_custom_tool_begin(
 
     tracker.batch_id.get_or_insert(batch.clone());
 
-    let raw_label = metadata.label.as_ref().map(|value| value.to_string());
+    let raw_label = metadata.label.as_ref().map(std::string::ToString::to_string);
     let clean_label_value = raw_label.as_ref().and_then(|value| clean_label(value));
-    if let Some(ref cleaned) = clean_label_value {
-        if !looks_like_uuid(cleaned) {
+    if let Some(ref cleaned) = clean_label_value
+        && !looks_like_uuid(cleaned) {
             tracker.batch_label = Some(cleaned.clone());
         }
-    }
 
     tracker.merge_agent_ids(metadata.agent_ids.clone());
     tracker.merge_models(metadata.models.clone());
 
     let name_for_cell = clean_label_value
-        .clone()
-        .or(raw_label.clone())
+        
+        .or(raw_label)
         .filter(|value| !looks_like_uuid(value));
     tracker.set_agent_name(name_for_cell, true);
 
@@ -780,11 +757,10 @@ pub(super) fn handle_custom_tool_begin(
     tracker.set_context(metadata.context.clone());
     tracker.set_task(metadata.task.clone());
 
-    if let Some(action) = begin_action_for(tool_name, &metadata) {
-        if let Some(message) = normalize_begin_action_text(&tracker, &metadata, action) {
+    if let Some(action) = begin_action_for(tool_name, &metadata)
+        && let Some(message) = normalize_begin_action_text(&tracker, &metadata, action) {
             tracker.cell.record_action(message);
         }
-    }
 
     let key = update_mappings(
         chat,
@@ -797,9 +773,7 @@ pub(super) fn handle_custom_tool_begin(
     );
     tool_cards::assign_tool_card_key(&mut tracker.slot, &mut tracker.cell, Some(key.clone()));
     let header_label = tracker
-        .batch_label
-        .as_ref()
-        .map(|value| value.clone())
+        .batch_label.clone()
         .or_else(|| tracker.batch_id.clone());
     tracker.cell.set_batch_label(header_label);
     tool_cards::replace_tool_card::<AgentRunCell>(chat, &mut tracker.slot, &tracker.cell);
@@ -845,7 +819,9 @@ pub(super) fn handle_custom_tool_end(
         .map(|meta| chat.provider_order_key_from_order_meta(meta))
         .unwrap_or_else(|| chat.next_internal_key());
     let ordinal = order.map(|m| m.request_ordinal);
-    let batch = metadata.batch_id.as_ref().expect("batch id required");
+    let Some(batch) = metadata.batch_id.as_ref() else {
+        return false;
+    };
 
     let (mut tracker, resolved_key) = match chat
         .tools_state
@@ -862,20 +838,19 @@ pub(super) fn handle_custom_tool_end(
 
     tracker.batch_id.get_or_insert(batch.clone());
 
-    let raw_label = metadata.label.as_ref().map(|value| value.to_string());
+    let raw_label = metadata.label.as_ref().map(std::string::ToString::to_string);
     let clean_label_value = raw_label.as_ref().and_then(|value| clean_label(value));
-    if let Some(ref cleaned) = clean_label_value {
-        if !looks_like_uuid(cleaned) {
+    if let Some(ref cleaned) = clean_label_value
+        && !looks_like_uuid(cleaned) {
             tracker.batch_label = Some(cleaned.clone());
         }
-    }
 
     tracker.merge_agent_ids(metadata.agent_ids.clone());
     tracker.merge_models(metadata.models.clone());
 
     let name_for_cell = clean_label_value
-        .clone()
-        .or(raw_label.clone())
+        
+        .or(raw_label)
         .filter(|value| !looks_like_uuid(value));
     tracker.set_agent_name(name_for_cell, true);
     if tracker.write_enabled.is_none() {
@@ -896,20 +871,18 @@ pub(super) fn handle_custom_tool_end(
             }
             tracker.cell.set_status_label("Completed");
             tracker.cell.mark_completed();
-            if let Some(action) = end_action_for(tool_name, &metadata, duration, true, Some(text.as_str())) {
-                if let Some(message) = normalize_end_action_text(&tracker, &metadata, action) {
+            if let Some(action) = end_action_for(tool_name, &metadata, duration, true, Some(text.as_str()))
+                && let Some(message) = normalize_end_action_text(&tracker, &metadata, action) {
                     tracker.cell.record_action(message);
                 }
-            }
         }
         Err(err) => {
             tracker.cell.set_latest_result(vec![err.clone()]);
             tracker.cell.mark_failed();
-            if let Some(action) = end_action_for(tool_name, &metadata, duration, false, Some(err.as_str())) {
-                if let Some(message) = normalize_end_action_text(&tracker, &metadata, action) {
+            if let Some(action) = end_action_for(tool_name, &metadata, duration, false, Some(err.as_str()))
+                && let Some(message) = normalize_end_action_text(&tracker, &metadata, action) {
                     tracker.cell.record_action(message);
                 }
-            }
         }
     }
 
@@ -1023,17 +996,15 @@ fn process_status_update_for_batch(
     tracker.slot.set_order_key(order_key);
     tracker.batch_id.get_or_insert(batch_id.to_string());
 
-    if tracker.context.is_none() {
-        if let Some(context) = event.context.clone() {
+    if tracker.context.is_none()
+        && let Some(context) = event.context.clone() {
             tracker.set_context(Some(context));
         }
-    }
 
-    if tracker.task.is_none() {
-        if let Some(task) = event.task.clone() {
+    if tracker.task.is_none()
+        && let Some(task) = event.task.clone() {
             tracker.set_task(Some(task));
         }
-    }
 
     let mut previews: Vec<AgentStatusPreview> = Vec::new();
     let mut status_collect = StatusSummary::default();
@@ -1052,11 +1023,9 @@ fn process_status_update_for_batch(
             .as_ref()
             .map(|label| label.trim().is_empty())
             .unwrap_or(true)
-        {
-            if let Some(cleaned) = clean_label(agent.name.as_str()).filter(|name| !looks_like_uuid(name)) {
+            && let Some(cleaned) = clean_label(agent.name.as_str()).filter(|name| !looks_like_uuid(name)) {
                 tracker.batch_label = Some(cleaned);
             }
-        }
 
         let phase = classify_status(
             &agent.status,
@@ -1083,8 +1052,8 @@ fn process_status_update_for_batch(
             }
         }
 
-        if details.is_empty() {
-            if let Some(error_text) = agent.error.as_ref() {
+        if details.is_empty()
+            && let Some(error_text) = agent.error.as_ref() {
                 let mut lines = lines_from(error_text);
                 if lines.is_empty() {
                     lines.push(error_text.clone());
@@ -1100,15 +1069,14 @@ fn process_status_update_for_batch(
                     summary_lines = Some(collected);
                 }
             }
-        }
 
         let step_progress = agent
             .last_progress
             .as_deref()
             .and_then(parse_progress);
 
-        if details.is_empty() {
-            if let Some(progress) = agent.last_progress.as_ref() {
+        if details.is_empty()
+            && let Some(progress) = agent.last_progress.as_ref() {
                 let mut lines = lines_from(progress);
                 if lines.is_empty() {
                     lines.push(progress.clone());
@@ -1119,7 +1087,6 @@ fn process_status_update_for_batch(
                     }
                 }
             }
-        }
 
         if details.is_empty() {
             details.push(AgentDetail::Info(agent.status.clone()));
@@ -1221,9 +1188,9 @@ fn process_status_update_for_batch(
             });
 
         match current_kind {
-            AgentStatusKind::Completed => status_updates.push(format!("{} completed", label)),
-            AgentStatusKind::Failed => status_updates.push(format!("{} failed", label)),
-            AgentStatusKind::Cancelled => status_updates.push(format!("{} cancelled", label)),
+            AgentStatusKind::Completed => status_updates.push(format!("{label} completed")),
+            AgentStatusKind::Failed => status_updates.push(format!("{label} failed")),
+            AgentStatusKind::Cancelled => status_updates.push(format!("{label} cancelled")),
             _ => {}
         }
     }
@@ -1281,14 +1248,13 @@ fn update_mappings(
         if batch_key != key {
             key = batch_key;
         }
-    } else if is_primary_run_tool(tool_name) {
-        if let Some(ord) = ordinal {
-            let ord_key = format!("req:{}:agent-run", ord);
+    } else if is_primary_run_tool(tool_name)
+        && let Some(ord) = ordinal {
+            let ord_key = format!("req:{ord}:agent-run");
             if ord_key != key {
                 key = ord_key;
             }
         }
-    }
 
     if let Some(cid) = call_id {
         tracker.call_ids.insert(cid.to_string());
@@ -1322,19 +1288,16 @@ fn update_mappings(
                 *stored = key.clone();
             }
         }
-        if let Some(batch) = tracker.batch_id.as_ref() {
-            if let Some(stored) = chat.tools_state.agent_run_by_batch.get_mut(batch) {
-                if *stored == original_key {
+        if let Some(batch) = tracker.batch_id.as_ref()
+            && let Some(stored) = chat.tools_state.agent_run_by_batch.get_mut(batch)
+                && *stored == original_key {
                     *stored = key.clone();
                 }
-            }
-        }
         for agent_id in &tracker.agent_ids {
-            if let Some(stored) = chat.tools_state.agent_run_by_agent.get_mut(agent_id) {
-                if *stored == original_key {
+            if let Some(stored) = chat.tools_state.agent_run_by_agent.get_mut(agent_id)
+                && *stored == original_key {
                     *stored = key.clone();
                 }
-            }
         }
         for cid in &tracker.call_ids {
             chat
@@ -1565,7 +1528,7 @@ fn parse_token_fragment(fragment: &str) -> Option<u64> {
         }
     }
 
-    let normalized = base.replace(',', "").replace('_', "");
+    let normalized = base.replace([',', '_'], "");
     if normalized.is_empty() {
         return None;
     }
@@ -1605,7 +1568,7 @@ fn parse_progress(progress: &str) -> Option<StepProgress> {
 }
 
 fn lines_from(input: &str) -> Vec<String> {
-    input.lines().map(|line| line.to_string()).collect()
+    input.lines().map(std::string::ToString::to_string).collect()
 }
 
 fn dedup(mut values: Vec<String>) -> Vec<String> {
@@ -1642,11 +1605,10 @@ fn drop_agent_run(chat: &mut ChatWidget<'_>, key: &str) {
             chat.tools_state.agent_last_key = None;
         }
 
-        if let Some(id) = tracker.slot.history_id {
-            if let Some(idx) = chat.cell_index_for_history_id(id) {
+        if let Some(id) = tracker.slot.history_id
+            && let Some(idx) = chat.cell_index_for_history_id(id) {
                 chat.history_remove_at(idx);
             }
-        }
     }
 }
 
@@ -1664,7 +1626,7 @@ fn trim_to_tail(text: &str, max_bytes: usize) -> (String, bool) {
         start_idx += 1;
     }
     let trimmed = String::from_utf8_lossy(&bytes[start_idx..]).to_string();
-    (format!("…{}", trimmed), true)
+    (format!("…{trimmed}"), true)
 }
 
 fn detail_text_len(detail: &AgentDetail) -> usize {

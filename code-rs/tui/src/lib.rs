@@ -160,11 +160,10 @@ fn rotate_log_file(log_dir: &Path, file_name: &str) {
     }
 
     let rotated = log_dir.join(format!("{file_name}.1"));
-    if std::fs::rename(&path, rotated).is_err() {
-        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&path) {
+    if std::fs::rename(&path, rotated).is_err()
+        && let Ok(file) = std::fs::OpenOptions::new().write(true).open(&path) {
             let _ = file.set_len(0);
         }
-    }
 }
 
 #[cfg(feature = "test-helpers")]
@@ -335,12 +334,16 @@ fn theme_configured_in_config_file(code_home: &std::path::Path) -> bool {
         return false;
     };
 
-    let table_pattern = Regex::new(r"(?m)^\s*\[tui\.theme\]").expect("valid regex");
+    let Ok(table_pattern) = Regex::new(r"(?m)^\s*\[tui\.theme\]") else {
+        return false;
+    };
     if table_pattern.is_match(&contents) {
         return true;
     }
 
-    let inline_pattern = Regex::new(r"(?m)^\s*tui\.theme\s*=").expect("valid regex");
+    let Ok(inline_pattern) = Regex::new(r"(?m)^\s*tui\.theme\s*=") else {
+        return false;
+    };
     inline_pattern.is_match(&contents)
 }
 // (tests access modules directly within the crate)
@@ -501,7 +504,7 @@ pub async fn run_main(
                 Ok(raw) => raw
                     .get("sandbox_workspace_write")
                     .and_then(|value| value.as_table())
-                    .map_or(false, |table| table.contains_key("network_access")),
+                    .is_some_and(|table| table.contains_key("network_access")),
                 Err(_) => false,
             }
         }
@@ -560,7 +563,7 @@ pub async fn run_main(
                             config.demo_developer_message = cli.demo_developer_message.clone();
                         }
                         Err(err) => {
-                            eprintln!("Error reloading configuration: {err}");
+                            tracing::error!("Error reloading configuration: {err}");
                             std::process::exit(1);
                         }
                     }
@@ -587,7 +590,7 @@ pub async fn run_main(
                                     config.demo_developer_message = cli.demo_developer_message.clone();
                                 }
                                 Err(err) => {
-                                    eprintln!("Error reloading configuration: {err}");
+                                    tracing::error!("Error reloading configuration: {err}");
                                     std::process::exit(1);
                                 }
                             }
@@ -879,7 +882,7 @@ fn restore() {
 
 #[allow(clippy::print_stderr)]
 fn print_timing_summary(summary: &str) {
-    eprintln!("\n== Timing Summary ==\n{}", summary);
+    eprintln!("\n== Timing Summary ==\n{summary}");
 }
 
 #[allow(clippy::print_stdout, clippy::print_stderr)]
@@ -887,7 +890,7 @@ fn cleanup_session_worktrees_and_print() {
     let pid = std::process::id();
     let home = match std::env::var_os("HOME") { Some(h) => std::path::PathBuf::from(h), None => return };
     let session_dir = home.join(".code").join("working").join("_session");
-    let file = session_dir.join(format!("pid-{}.txt", pid));
+    let file = session_dir.join(format!("pid-{pid}.txt"));
     reclaim_worktrees_from_file(&file, "current session");
 }
 
@@ -915,7 +918,7 @@ fn reclaim_worktrees_from_file(path: &std::path::Path, label: &str) {
         return;
     }
 
-    eprintln!("Cleaning remaining worktrees for {} ({}).", label, entries.len());
+    tracing::info!("Cleaning remaining worktrees for {label} ({}).", entries.len());
     let current_pid = std::process::id();
     for (git_root, worktree) in entries {
         let Some(wt_str) = worktree.to_str() else { continue };
@@ -954,7 +957,7 @@ fn reclaim_worktrees_from_file(path: &std::path::Path, label: &str) {
                 .as_ref()
                 .map(|info| format!("pid {} (intent: {})", info.pid, info.intent))
                 .unwrap_or_else(|| "unknown holder".to_string());
-            eprintln!(
+            tracing::warn!(
                 "Deferring cleanup of {} — cleanup lock busy ({detail}); will retry on next shutdown",
                 worktree.display()
             );
@@ -965,11 +968,9 @@ fn reclaim_worktrees_from_file(path: &std::path::Path, label: &str) {
             .current_dir(&git_root)
             .args(["worktree", "remove", wt_str, "--force"])
             .output()
-        {
-            if out.status.success() {
+            && out.status.success() {
                 bump_snapshot_epoch();
             }
-        }
         let _ = std::fs::remove_dir_all(&worktree);
     }
     let _ = std::fs::remove_file(path);
@@ -1011,8 +1012,8 @@ fn maybe_apply_terminal_theme_detection(config: &mut Config, theme_configured_ex
         std::env::var("TERM_PROGRAM_VERSION").ok().filter(|value| !value.is_empty());
     let colorfgbg = std::env::var("COLORFGBG").ok().filter(|value| !value.is_empty());
 
-    if let Some(cached) = config.tui.cached_terminal_background.as_ref() {
-        if cached_background_matches_env(
+    if let Some(cached) = config.tui.cached_terminal_background.as_ref()
+        && cached_background_matches_env(
             cached,
             &term,
             &term_program,
@@ -1026,7 +1027,6 @@ fn maybe_apply_terminal_theme_detection(config: &mut Config, theme_configured_ex
             apply_detected_theme(theme, cached.is_dark);
             return;
         }
-    }
 
     match crate::terminal_info::detect_dark_terminal_background() {
         Some(detection) => {
@@ -1047,7 +1047,7 @@ fn maybe_apply_terminal_theme_detection(config: &mut Config, theme_configured_ex
                 source: Some(source.to_string()),
                 rgb: detection
                     .rgb
-                    .map(|(r, g, b)| format!("{:02x}{:02x}{:02x}", r, g, b)),
+                    .map(|(r, g, b)| format!("{r:02x}{g:02x}{b:02x}")),
             };
 
             config.tui.cached_terminal_background = Some(cache.clone());
@@ -1313,11 +1313,7 @@ fn determine_repo_trust_state(
                 // network even when we pivot into WorkspaceWrite solely to protect `.git`.
                 let network_access = if workspace_write.network_access {
                     true
-                } else if workspace_write_network_access_explicit {
-                    false
-                } else {
-                    true
-                };
+                } else { !workspace_write_network_access_explicit };
                 config.approval_policy = AskForApproval::Never;
                 config.sandbox_policy = SandboxPolicy::WorkspaceWrite {
                     writable_roots: workspace_write.writable_roots.clone(),

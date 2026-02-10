@@ -364,11 +364,10 @@ fn stream_tail(full: &str, streamed: &str) -> Option<String> {
 }
 
 fn history_record_for_cell(chat: &ChatWidget<'_>, idx: usize) -> Option<HistoryRecord> {
-    if let Some(Some(id)) = chat.history_cell_ids.get(idx) {
-        if let Some(record) = chat.history_state.record(*id).cloned() {
+    if let Some(Some(id)) = chat.history_cell_ids.get(idx)
+        && let Some(record) = chat.history_state.record(*id).cloned() {
             return Some(record);
         }
-    }
     chat.history_cells
         .get(idx)
         .and_then(|cell| history_cell::record_from_cell(cell.as_ref()))
@@ -391,8 +390,7 @@ pub(super) fn finalize_exec_cell_at(
     if let Some(exec) = chat.history_cells[idx]
         .as_any()
         .downcast_ref::<history_cell::ExecCell>()
-    {
-        if exec.output.is_none() {
+        && exec.output.is_none() {
             let completed = history_cell::new_completed_exec_command(
                 exec.command.clone(),
                 exec.parsed.clone(),
@@ -404,7 +402,6 @@ pub(super) fn finalize_exec_cell_at(
             );
             chat.history_replace_at(idx, Box::new(completed));
         }
-    }
 }
 
 pub(super) fn finalize_all_running_as_interrupted(chat: &mut ChatWidget<'_>) {
@@ -427,9 +424,9 @@ pub(super) fn finalize_all_running_as_interrupted(chat: &mut ChatWidget<'_>) {
                 interrupted_msg.clone(),
             );
         }
-        if let Some((agg_idx, entry_idx)) = explore_entry {
-            if *agg_idx < chat.history_cells.len() {
-                if let Some(existing) = chat.history_cells[*agg_idx]
+        if let Some((agg_idx, entry_idx)) = explore_entry
+            && *agg_idx < chat.history_cells.len()
+                && let Some(existing) = chat.history_cells[*agg_idx]
                     .as_any()
                     .downcast_ref::<history_cell::ExploreAggregationCell>()
                 {
@@ -448,8 +445,6 @@ pub(super) fn finalize_all_running_as_interrupted(chat: &mut ChatWidget<'_>) {
                     chat.autoscroll_if_near_bottom();
                     agg_was_updated = true;
                 }
-            }
-        }
         chat.canceled_exec_call_ids.insert(call_id.clone());
     }
     chat.exec.running_commands.clear();
@@ -467,8 +462,8 @@ pub(super) fn finalize_all_running_as_interrupted(chat: &mut ChatWidget<'_>) {
             .map(|(k, entry)| (k.clone(), *entry))
             .collect();
         for (tool_id, entry) in entries {
-            if let Some(idx) = running_tools::resolve_entry_index(chat, &entry, &tool_id.0) {
-                if idx < chat.history_cells.len() {
+            if let Some(idx) = running_tools::resolve_entry_index(chat, &entry, &tool_id.0)
+                && idx < chat.history_cells.len() {
                     let mut emphasis = TextEmphasis::default();
                     emphasis.bold = true;
                     let wait_state = PlainMessageState {
@@ -511,7 +506,6 @@ pub(super) fn finalize_all_running_as_interrupted(chat: &mut ChatWidget<'_>) {
                         chat.history_replace_at(idx, Box::new(completed));
                     }
                 }
-            }
         }
         chat.tools_state.running_custom_tools.clear();
         chat.invalidate_height_cache();
@@ -614,8 +608,8 @@ pub(super) fn finalize_all_running_due_to_answer(chat: &mut ChatWidget<'_>) {
             if !handled_via_state {
                 let mut stdout_so_far = String::new();
                 let mut stderr_so_far = String::new();
-                if let Some(history_id) = history_id {
-                    if let Some(record) = chat.history_state.record(history_id) {
+                if let Some(history_id) = history_id
+                    && let Some(record) = chat.history_state.record(history_id) {
                         match record {
                             HistoryRecord::Exec(exec_record) => {
                                 stdout_so_far = stream_chunks_tail_to_text(
@@ -642,7 +636,6 @@ pub(super) fn finalize_all_running_due_to_answer(chat: &mut ChatWidget<'_>) {
                             _ => {}
                         }
                     }
-                }
 
                 if !stderr_so_far.is_empty() {
                     stderr_so_far.push('\n');
@@ -736,8 +729,8 @@ pub(super) fn finalize_wait_missing_exec(
         }
     }
 
-    if let Some(id) = history_id {
-        if let Some(record) = chat.history_state.record(id) {
+    if let Some(id) = history_id
+        && let Some(record) = chat.history_state.record(id) {
             match record {
                 HistoryRecord::Exec(exec_record) => {
                     if exec_record.status != ExecStatus::Running {
@@ -754,7 +747,6 @@ pub(super) fn finalize_wait_missing_exec(
                 _ => {}
             }
         }
-    }
 
     if let Some((agg_idx, entry_idx)) = explore_entry {
         let status = history_cell::ExploreEntryStatus::Error { exit_code: None };
@@ -793,7 +785,7 @@ pub(super) fn finalize_wait_missing_exec(
         ..
     } = finish_mutation
     {
-        chat.update_cell_from_record(id, HistoryRecord::Exec(exec_record.clone()));
+        chat.update_cell_from_record(id, HistoryRecord::Exec(exec_record));
         if let Some(idx) = chat.cell_index_for_history_id(id) {
             crate::chatwidget::exec_tools::try_merge_completed_exec_at(chat, idx);
         }
@@ -803,8 +795,8 @@ pub(super) fn finalize_wait_missing_exec(
     if !handled_via_state {
         let mut stdout_so_far = String::new();
         let mut stderr_so_far = String::new();
-        if let Some(history_id) = history_id {
-            if let Some(record) = chat.history_state.record(history_id) {
+        if let Some(history_id) = history_id
+            && let Some(record) = chat.history_state.record(history_id) {
                 match record {
                     HistoryRecord::Exec(exec_record) => {
                         stdout_so_far = stream_chunks_tail_to_text(
@@ -831,7 +823,6 @@ pub(super) fn finalize_wait_missing_exec(
                     _ => {}
                 }
             }
-        }
 
         if !stderr_so_far.is_empty() {
             stderr_so_far.push('\n');
@@ -896,7 +887,7 @@ pub(super) fn try_merge_completed_exec_at(chat: &mut ChatWidget<'_>, idx: usize)
             let merged = history_cell::MergedExecCell::from_records(
                 prev_exec.id,
                 prev_exec.action,
-                vec![prev_exec.clone(), current_exec.clone()],
+                vec![prev_exec, current_exec],
             );
             chat.history_replace_at(idx - 1, Box::new(merged));
             chat.history_remove_at(idx);
@@ -909,7 +900,7 @@ pub(super) fn try_merge_completed_exec_at(chat: &mut ChatWidget<'_>, idx: usize)
             if merged_exec.action != current_exec.action {
                 return;
             }
-            merged_exec.segments.push(current_exec.clone());
+            merged_exec.segments.push(current_exec);
             let merged_cell = history_cell::MergedExecCell::from_state(merged_exec.clone());
             chat.history_replace_at(idx - 1, Box::new(merged_cell));
             chat.history_remove_at(idx);
@@ -964,7 +955,7 @@ fn try_upgrade_fallback_exec_cell(
                     let mutation = chat.history_state.apply_domain_event(
                         HistoryDomainEvent::Replace {
                             index: record_index,
-                            record: HistoryDomainRecord::Exec(exec_record.clone()),
+                            record: HistoryDomainRecord::Exec(exec_record),
                         },
                     );
 
@@ -976,7 +967,7 @@ fn try_upgrade_fallback_exec_cell(
                     {
                         chat.update_cell_from_record(
                             id,
-                            HistoryRecord::Exec(updated_record.clone()),
+                            HistoryRecord::Exec(updated_record),
                         );
                         if let Some(idx) = chat.cell_index_for_history_id(id) {
                             if promote_exec_cell_to_explore(chat, idx) {
@@ -1077,7 +1068,7 @@ fn apply_exec_begin_metadata_to_finished_call(
                 ..
             } = mutation
             {
-                chat.update_cell_from_record(id, HistoryRecord::Exec(updated_record.clone()));
+                chat.update_cell_from_record(id, HistoryRecord::Exec(updated_record));
                 if let Some(idx) = chat.cell_index_for_history_id(id) {
                     if promote_exec_cell_to_explore(chat, idx) {
                         return true;
@@ -1150,11 +1141,10 @@ fn apply_exec_begin_metadata_to_finished_call(
             } = mutation
             {
                 chat.update_cell_from_record(id, HistoryRecord::MergedExec(updated_record));
-                if let Some(idx) = chat.cell_index_for_history_id(id) {
-                    if promote_exec_cell_to_explore(chat, idx) {
+                if let Some(idx) = chat.cell_index_for_history_id(id)
+                    && promote_exec_cell_to_explore(chat, idx) {
                         return true;
                     }
-                }
                 chat.invalidate_height_cache();
                 chat.request_redraw();
                 return true;
@@ -1266,8 +1256,8 @@ pub(super) fn handle_exec_begin_now(
                 cell.as_any()
                     .downcast_ref::<history_cell::ExploreAggregationCell>()
                     .map(|existing| existing.record().clone())
-            }) {
-                if let Some(entry_idx) = history_cell::explore_record_push_from_parsed(
+            })
+                && let Some(entry_idx) = history_cell::explore_record_push_from_parsed(
                     &mut record,
                     &parsed_command,
                     history_cell::ExploreEntryStatus::Running,
@@ -1307,7 +1297,6 @@ pub(super) fn handle_exec_begin_now(
                     chat.refresh_auto_drive_visuals();
                     return;
                 }
-            }
 
             if created_new {
                 chat.history_remove_at(idx);
@@ -1324,7 +1313,7 @@ pub(super) fn handle_exec_begin_now(
         chat.history_replace_with_record(
             idx,
             Box::new(replacement),
-            HistoryDomainRecord::Exec(exec_record.clone()),
+            HistoryDomainRecord::Exec(exec_record),
         );
         if idx < chat.cell_order_seq.len() {
             chat.cell_order_seq[idx] = key;
@@ -1346,7 +1335,7 @@ pub(super) fn handle_exec_begin_now(
             Box::new(cell),
             key,
             "exec-begin",
-            Some(HistoryDomainRecord::Exec(exec_record.clone())),
+            Some(HistoryDomainRecord::Exec(exec_record)),
         )
     };
     chat.exec.running_commands.insert(
@@ -1392,7 +1381,7 @@ pub(super) fn handle_exec_begin_now(
             preview
         };
         chat.bottom_pane
-            .update_status_text(format!("running command: {}", preview_short));
+            .update_status_text(format!("running command: {preview_short}"));
     }
     chat.refresh_auto_drive_visuals();
 }
@@ -1407,7 +1396,7 @@ pub(super) fn handle_exec_end_now(
     if suppressing {
         chat.exec.unsuppress_exec_end(&call_id);
         if !chat.exec.running_commands.contains_key(&call_id) {
-            chat.ended_call_ids.insert(super::ExecCallId(ev.call_id.clone()));
+            chat.ended_call_ids.insert(super::ExecCallId(ev.call_id));
             chat.maybe_hide_spinner();
             chat.refresh_auto_drive_visuals();
             return;
@@ -1468,8 +1457,8 @@ pub(super) fn handle_exec_end_now(
                     streamed_stdout = stream_chunks_to_text(&record.stdout_chunks);
                     streamed_stderr = stream_chunks_to_text(&record.stderr_chunks);
                 }
-            } else if let Some(idx) = history_index {
-                if let Some(exec_cell) = chat
+            } else if let Some(idx) = history_index
+                && let Some(exec_cell) = chat
                     .history_cells
                     .get(idx)
                     .and_then(|cell| cell.as_any().downcast_ref::<history_cell::ExecCell>())
@@ -1477,7 +1466,6 @@ pub(super) fn handle_exec_end_now(
                     streamed_stdout = stream_chunks_to_text(&exec_cell.record.stdout_chunks);
                     streamed_stderr = stream_chunks_to_text(&exec_cell.record.stderr_chunks);
                 }
-            }
 
             (
                 command,
@@ -1503,8 +1491,8 @@ pub(super) fn handle_exec_end_now(
             let mut streamed_stdout = String::new();
             let mut streamed_stderr = String::new();
 
-            if let Some(id) = history_id {
-                if let Some(HistoryRecord::Exec(record)) = chat.history_state.record(id).cloned() {
+            if let Some(id) = history_id
+                && let Some(HistoryRecord::Exec(record)) = chat.history_state.record(id).cloned() {
                     command = record.command.clone();
                     parsed = record.parsed.clone();
                     wait_total = record.wait_total;
@@ -1515,10 +1503,9 @@ pub(super) fn handle_exec_end_now(
                         history_index = chat.cell_index_for_history_id(id);
                     }
                 }
-            }
 
-            if history_index.is_none() {
-                if let Some((idx, exec_cell)) = chat
+            if history_index.is_none()
+                && let Some((idx, exec_cell)) = chat
                     .history_cells
                     .iter()
                     .enumerate()
@@ -1544,7 +1531,6 @@ pub(super) fn handle_exec_end_now(
                     streamed_stdout = stream_chunks_to_text(&exec_cell.record.stdout_chunks);
                     streamed_stderr = stream_chunks_to_text(&exec_cell.record.stderr_chunks);
                 }
-            }
 
             (
                 command,
@@ -1607,7 +1593,7 @@ pub(super) fn handle_exec_end_now(
     }
 
     let command_for_watch = command.clone();
-    let wait_notes_pairs = wait_notes.clone();
+    let wait_notes_pairs = wait_notes;
     let status = if exit_code == 0 {
         ExecStatus::Success
     } else {
@@ -1640,7 +1626,7 @@ pub(super) fn handle_exec_end_now(
         ..
     } = finish_mutation
     {
-        chat.update_cell_from_record(id, HistoryRecord::Exec(exec_record.clone()));
+        chat.update_cell_from_record(id, HistoryRecord::Exec(exec_record));
         if let Some(idx) = chat.cell_index_for_history_id(id) {
             crate::chatwidget::exec_tools::try_merge_completed_exec_at(chat, idx);
         }
@@ -1653,8 +1639,8 @@ pub(super) fn handle_exec_end_now(
             parsed,
             CommandOutput {
                 exit_code,
-                stdout: stdout.clone(),
-                stderr: stderr.clone(),
+                stdout,
+                stderr,
             },
         ));
         if let Some(cell) = completed_opt.as_mut() {
@@ -1721,13 +1707,12 @@ pub(super) fn handle_exec_end_now(
             }
         }
 
-        if !replaced {
-            if let Some(c) = completed_opt.take() {
+        if !replaced
+            && let Some(c) = completed_opt.take() {
                 let key = chat.provider_order_key_from_order_meta(order);
                 let idx = chat.history_insert_with_key_global(Box::new(c), key);
                 crate::chatwidget::exec_tools::try_merge_completed_exec_at(chat, idx);
             }
-        }
     }
 
     if exit_code == 0 {
@@ -1746,7 +1731,7 @@ pub(super) fn handle_exec_end_now(
     } else {
         chat
             .bottom_pane
-            .update_status_text(format!("command failed (exit {})", exit_code));
+            .update_status_text(format!("command failed (exit {exit_code})"));
     }
     chat.maybe_hide_spinner();
     chat.refresh_auto_drive_visuals();

@@ -353,14 +353,14 @@ fn dedup_append_entries(
         .rev()
         .filter(|l| !is_marker(l))
         .take(64)
-        .map(|l| to_plain(l))
+        .map(&to_plain)
         .collect();
     existing_plain.reverse();
 
     let incoming_plain: Vec<String> = incoming
         .iter()
         .filter(|l| !is_marker(l))
-        .map(|l| to_plain(l))
+        .map(&to_plain)
         .collect();
 
     let max_overlap = existing_plain.len().min(incoming_plain.len());
@@ -428,9 +428,9 @@ fn sections_from_entries(lines: &[ReasoningLineEntry]) -> Vec<ReasoningSection> 
             let (block_opt, next_idx) = extract_code_block(lines, idx);
             idx = next_idx;
             if let Some(block) = block_opt {
-                if !summary_set {
-                    if let ReasoningBlock::Code { content, .. } = &block {
-                        if let Some(first_line) = content.lines().find(|l| !l.trim().is_empty()) {
+                if !summary_set
+                    && let ReasoningBlock::Code { content, .. } = &block
+                        && let Some(first_line) = content.lines().find(|l| !l.trim().is_empty()) {
                             current.summary = Some(vec![InlineSpan {
                                 text: first_line.trim().to_string(),
                                 tone: TextTone::Dim,
@@ -439,8 +439,6 @@ fn sections_from_entries(lines: &[ReasoningLineEntry]) -> Vec<ReasoningSection> 
                             }]);
                             summary_set = true;
                         }
-                    }
-                }
                 current.blocks.push(block);
             }
             continue;
@@ -710,12 +708,11 @@ fn extract_code_block(
     let mut content_lines: Vec<Line<'static>> = Vec::new();
     for (line_idx, line) in chunk.into_iter().enumerate() {
         let flat = flatten_line(&line);
-        if line_idx == 0 {
-            if let Some(label) = extract_lang_label(&flat) {
+        if line_idx == 0
+            && let Some(label) = extract_lang_label(&flat) {
                 lang_label = Some(label);
                 continue;
             }
-        }
         if flat.contains("⟦LANG:") {
             continue;
         }
@@ -800,7 +797,7 @@ fn sections_to_ratatui_lines(
                     let indent_spaces = (*indent as usize).saturating_mul(2);
                     let marker_text = match marker {
                         BulletMarker::Dash => "•".to_string(),
-                        BulletMarker::Numbered(n) => format!("{}.", n),
+                        BulletMarker::Numbered(n) => format!("{n}."),
                         BulletMarker::Custom(s) => s.clone(),
                     };
                     let mut line_spans = Vec::new();
@@ -952,7 +949,7 @@ fn debug_title_overlay(lines: &[Line<'static>]) -> String {
             if text.width() > maxw {
                 let (prefix, _suffix, _w) =
                     crate::live_wrap::take_prefix_by_width(&text, maxw.saturating_sub(1));
-                text = format!("{}…", prefix);
+                text = format!("{prefix}…");
             }
             title_previews.push(text);
         }
@@ -971,7 +968,6 @@ fn debug_title_overlay(lines: &[Line<'static>]) -> String {
         })
         .unwrap_or(0);
     format!(
-        "rtitles={} idx={:?} total_lines={} lastw={} prevs={:?}",
-        titles, title_idxs, total, lastw, title_previews
+        "rtitles={titles} idx={title_idxs:?} total_lines={total} lastw={lastw} prevs={title_previews:?}"
     )
 }

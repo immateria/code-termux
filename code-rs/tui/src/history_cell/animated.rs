@@ -29,7 +29,7 @@ impl AnimatedWelcomeCell {
 
     pub(crate) fn set_available_height(&self, height: u16) {
         let prev = self.available_height.get();
-        if prev.map_or(true, |current| height > current) {
+        if prev.is_none_or(|current| height > current) {
             self.available_height.set(Some(height));
         }
     }
@@ -114,7 +114,7 @@ impl HistoryCell for AnimatedWelcomeCell {
             height_hint.saturating_sub(3),
         );
         let previous_variant = self.variant.get();
-        let variant_changed = previous_variant.map_or(false, |v| v != current_variant);
+        let variant_changed = previous_variant.is_some_and(|v| v != current_variant);
 
         if variant_changed {
             self.variant.set(Some(current_variant));
@@ -207,14 +207,13 @@ impl HistoryCell for AnimatedWelcomeCell {
             self.completed.set(true);
         }
 
-        if let Some(fade_time) = self.fade_start() {
-            if !self.faded_out.get() {
+        if let Some(fade_time) = self.fade_start()
+            && !self.faded_out.get() {
                 if fade_time.elapsed() < Duration::from_millis(800) {
                     return true;
                 }
                 self.faded_out.set(true);
             }
-        }
 
         false
     }

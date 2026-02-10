@@ -18,8 +18,8 @@ fn parse_response_expected(path: &Path) -> Result<Vec<(u64, u64)>> {
     for ev in events {
         let data = ev.get("data");
         if let Some(d) = data {
-            let out = d.get("output_index").and_then(|x| x.as_u64());
-            let seq = d.get("sequence_number").and_then(|x| x.as_u64());
+            let out = d.get("output_index").and_then(serde_json::Value::as_u64);
+            let seq = d.get("sequence_number").and_then(serde_json::Value::as_u64);
             if let (Some(out), Some(seq)) = (out, seq) {
                 items.push((out, seq));
             }
@@ -40,19 +40,38 @@ struct InsertLog {
 
 fn parse_tui_inserts(path: &Path) -> Result<Vec<InsertLog>> {
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let re = Regex::new(r"insert window: seq=(?P<seq>\d+) \((?P<kind>[OU]):(?:req=(?P<req>\d+) out=(?P<out>\d+) seq=(?P<iseq>\d+)|(?P<uval>\d+))\)").unwrap();
+    let re = Regex::new(
+        r"insert window: seq=(?P<seq>\d+) \((?P<kind>[OU]):(?:req=(?P<req>\d+) out=(?P<out>\d+) seq=(?P<iseq>\d+)|(?P<uval>\d+))\)",
+    )
+    .context("compile insert log regex")?;
     let mut out = Vec::new();
     for line in text.lines() {
         if let Some(caps) = re.captures(line) {
-            let seq: u64 = caps.name("seq").unwrap().as_str().parse().unwrap_or(0);
+            let Some(seq_match) = caps.name("seq") else {
+                continue;
+            };
+            let seq: u64 = seq_match.as_str().parse().unwrap_or(0);
             let ordered = &caps["kind"] == "O";
             let (req, out_idx, item_seq) = if ordered {
-                let req = caps.name("req").unwrap().as_str().parse().unwrap_or(0);
-                let out_idx = caps.name("out").unwrap().as_str().parse().unwrap_or(0);
-                let iseq = caps.name("iseq").unwrap().as_str().parse().unwrap_or(0);
+                let req = caps
+                    .name("req")
+                    .and_then(|value| value.as_str().parse::<u64>().ok())
+                    .unwrap_or(0);
+                let out_idx = caps
+                    .name("out")
+                    .and_then(|value| value.as_str().parse::<u64>().ok())
+                    .unwrap_or(0);
+                let iseq = caps
+                    .name("iseq")
+                    .and_then(|value| value.as_str().parse::<u64>().ok())
+                    .unwrap_or(0);
                 (req, out_idx, iseq)
             } else {
-                (0, 0, caps.name("uval").unwrap().as_str().parse().unwrap_or(0))
+                let uval = caps
+                    .name("uval")
+                    .and_then(|value| value.as_str().parse::<u64>().ok())
+                    .unwrap_or(0);
+                (0, 0, uval)
             };
             out.push(InsertLog { seq, ordered, req, out: out_idx, item_seq });
         }
@@ -71,7 +90,7 @@ fn main() -> Result<()> {
 
     println!("Expected (first 20):");
     for (i, (out, seq)) in expected.iter().take(20).enumerate() {
-        println!("  {:>3}: out={} seq={}", i, out, seq);
+        println!("  {i:>3}: out={out} seq={seq}");
     }
 
     println!("\nActual inserts (first 40):");

@@ -39,7 +39,7 @@ pub fn create_initial_user_message(text: String, image_paths: Vec<PathBuf>) -> O
         }
         for path in image_paths {
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("image");
-            ordered.push(InputItem::Text { text: format!("[image: {}]", filename) });
+            ordered.push(InputItem::Text { text: format!("[image: {filename}]") });
             ordered.push(InputItem::LocalImage { path });
         }
         Some(UserMessage {

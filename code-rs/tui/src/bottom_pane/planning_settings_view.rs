@@ -67,7 +67,7 @@ impl PlanningSettingsView {
     fn handle_enter(&mut self, row: PlanningRow) {
         match row {
             PlanningRow::CustomModel => {
-                let _ = self.app_event_tx.send(AppEvent::ShowPlanningModelSelector);
+                self.app_event_tx.send(AppEvent::ShowPlanningModelSelector);
             }
         }
     }
@@ -117,12 +117,11 @@ impl PlanningSettingsView {
                     Span::raw("  "),
                     Span::styled(value_text, value_style),
                 ];
-                if selected {
-                    if let Some(hint) = hint_text {
+                if selected
+                    && let Some(hint) = hint_text {
                         spans.push(Span::raw("  "));
                         spans.push(Span::styled(hint, Style::default().fg(colors::text_dim())));
                     }
-                }
                 Line::from(spans)
             }
         }
@@ -179,11 +178,10 @@ impl PlanningSettingsView {
             KeyCode::Up => self.state.move_up_wrap(total),
             KeyCode::Down => self.state.move_down_wrap(total),
             KeyCode::Char(' ') | KeyCode::Enter => {
-                if let Some(sel) = self.state.selected_idx {
-                    if let Some(row) = rows.get(sel).copied() {
+                if let Some(sel) = self.state.selected_idx
+                    && let Some(row) = rows.get(sel).copied() {
                         self.handle_enter(row);
                     }
-                }
             }
             KeyCode::Esc => {
                 self.is_complete = true;
@@ -274,7 +272,7 @@ impl<'a> BottomPaneView<'a> for PlanningSettingsView {
         let selected_idx = self.state.selected_idx.unwrap_or(0).min(rows.len().saturating_sub(1));
 
         let mut lines: Vec<Line> = Vec::new();
-        lines.extend(header_lines.into_iter());
+        lines.extend(header_lines);
         for (idx, row) in rows.iter().enumerate() {
             let selected = idx == selected_idx;
             lines.push(self.render_row(*row, selected));

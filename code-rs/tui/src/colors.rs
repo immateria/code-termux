@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use ratatui::style::Color;
 use crate::theme::{current_theme, palette_mode, quantize_color_for_palette, PaletteMode};
 

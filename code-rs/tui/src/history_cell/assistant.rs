@@ -194,7 +194,7 @@ impl AssistantMarkdownCell {
                         });
                     let blk = if let Some(lang) = lang_label {
                         blk.title(Span::styled(
-                            format!(" {} ", lang),
+                            format!(" {lang} "),
                             Style::default().fg(crate::colors::text_dim()),
                         ))
                     } else {
@@ -381,7 +381,11 @@ pub(crate) fn compute_assistant_layout_with_context(
             let mut chunk = vec![line];
             while let Some(next) = iter.peek() {
                 if crate::render::line_utils::is_code_block_painted(next) {
-                    chunk.push(iter.next().unwrap());
+                    if let Some(next_line) = iter.next() {
+                        chunk.push(next_line);
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -396,12 +400,11 @@ pub(crate) fn compute_assistant_layout_with_context(
                         .iter()
                         .map(|s| s.content.as_ref())
                         .collect();
-                    if let Some(s) = flat.strip_prefix("⟦LANG:") {
-                        if let Some(end) = s.find('⟧') {
+                    if let Some(s) = flat.strip_prefix("⟦LANG:")
+                        && let Some(end) = s.find('⟧') {
                             lang_label = Some(s[..end].to_string());
                             continue;
                         }
-                    }
                 }
                 content_lines.push(candidate);
             }
@@ -431,7 +434,7 @@ pub(crate) fn compute_assistant_layout_with_context(
 
             let max_line_width = content_lines
                 .iter()
-                .map(|l| measure_line(l))
+                .map(&measure_line)
                 .max()
                 .unwrap_or(0);
 
@@ -450,8 +453,7 @@ pub(crate) fn compute_assistant_layout_with_context(
                 text_buf.clear();
             }
             let hr = Line::from(Span::styled(
-                std::iter::repeat('─')
-                    .take(text_wrap_width as usize)
+                std::iter::repeat_n('─', text_wrap_width as usize)
                     .collect::<String>(),
                 Style::default().fg(crate::colors::assistant_hr()),
             ));
@@ -459,8 +461,8 @@ pub(crate) fn compute_assistant_layout_with_context(
             continue;
         }
 
-        if text_wrap_width > 4 {
-            if let Some((indent_spaces, bullet_char)) = detect_bullet_prefix(&line) {
+        if text_wrap_width > 4
+            && let Some((indent_spaces, bullet_char)) = detect_bullet_prefix(&line) {
                 if !text_buf.is_empty() {
                     let wrapped = word_wrap_lines(&text_buf, text_wrap_width);
                     segs.push(AssistantSeg::Text(wrapped));
@@ -474,7 +476,6 @@ pub(crate) fn compute_assistant_layout_with_context(
                 )));
                 continue;
             }
-        }
 
         text_buf.push(line);
     }
@@ -648,7 +649,7 @@ pub(crate) fn detect_bullet_prefix(
     // First span may be leading spaces
     let mut idx = 0;
     let mut indent = 0usize;
-    if let Some(s) = spans.get(0) {
+    if let Some(s) = spans.first() {
         let t = s.content.as_ref();
         if !t.is_empty() && t.chars().all(|c| c == ' ') {
             indent = t.chars().count();
@@ -698,15 +699,14 @@ pub(crate) fn detect_bullet_prefix(
         }
     }
     let has_space = matches!(chars.peek(), Some(c) if c.is_whitespace());
-    if has_space {
-        if bullets.contains(&token.as_str())
+    if has_space
+        && (bullets.contains(&token.as_str())
             || (token.len() >= 2
                 && token.ends_with('.')
-                && token[..token.len() - 1].chars().all(|c| c.is_ascii_digit()))
+                && token[..token.len() - 1].chars().all(|c| c.is_ascii_digit())))
         {
             return Some((indent_count, token));
         }
-    }
     None
 }
 
@@ -779,7 +779,7 @@ pub(crate) fn wrap_bullet_line(
             width.saturating_sub(first_prefix)
         } else {
             width.saturating_sub(cont_prefix)
-        } as usize;
+        };
         let avail_cols = avail_cols.max(1);
 
         let mut taken = 0usize;
@@ -847,14 +847,18 @@ pub(crate) fn wrap_bullet_line(
                 buf.push_str(g);
             } else {
                 if !buf.is_empty() {
-                    seg_spans.push(Span::styled(std::mem::take(&mut buf), cur_style.unwrap()));
+                    if let Some(style) = cur_style {
+                        seg_spans.push(Span::styled(std::mem::take(&mut buf), style));
+                    }
                 }
                 cur_style = Some(*st);
                 buf.push_str(g);
             }
         }
         if !buf.is_empty() {
-            seg_spans.push(Span::styled(buf, cur_style.unwrap()));
+            if let Some(style) = cur_style {
+                seg_spans.push(Span::styled(buf, style));
+            }
         }
         out.push(ratatui::text::Line::from(seg_spans));
         pos = next_start;

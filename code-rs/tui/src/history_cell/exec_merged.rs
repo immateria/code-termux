@@ -121,11 +121,10 @@ impl MergedExecCell {
                 let tail = &rest[idx + 1..];
                 if tail.starts_with("(lines ") && tail.ends_with(")") {
                     let inner = &tail[7..tail.len().saturating_sub(1)];
-                    if let Some((a, b)) = inner.split_once(" to ") {
-                        if let (Ok(s), Ok(e)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
+                    if let Some((a, b)) = inner.split_once(" to ")
+                        && let (Ok(s), Ok(e)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
                             return Some((fname, s, e));
                         }
-                    }
                 }
             }
             None
@@ -173,12 +172,11 @@ impl MergedExecCell {
             }
         }
         for line in kept.iter_mut().skip(1) {
-            if let Some(span0) = line.spans.get_mut(0) {
-                if span0.content.as_ref() == "└ " {
+            if let Some(span0) = line.spans.get_mut(0)
+                && span0.content.as_ref() == "└ " {
                     span0.content = "  ".into();
                     span0.style = span0.style.add_modifier(Modifier::DIM);
                 }
-            }
         }
 
         coalesce_read_ranges_in_lines_local(&mut kept);
@@ -232,8 +230,8 @@ impl HistoryCell for MergedExecCell {
             if self.kind != ExecKind::Run && !pre.is_empty() {
                 pre.remove(0);
             }
-            if self.kind != ExecKind::Run {
-                if let Some(first) = pre.first_mut() {
+            if self.kind != ExecKind::Run
+                && let Some(first) = pre.first_mut() {
                     let flat: String = first.spans.iter().map(|s| s.content.as_ref()).collect();
                     let has_corner = flat.trim_start().starts_with("└ ");
                     let has_spaced_corner = flat.trim_start().starts_with("  └ ");
@@ -245,14 +243,12 @@ impl HistoryCell for MergedExecCell {
                             );
                         }
                         added_corner = true;
-                    } else if let Some(sp0) = first.spans.get_mut(0) {
-                        if sp0.content.as_ref() == "└ " {
+                    } else if let Some(sp0) = first.spans.get_mut(0)
+                        && sp0.content.as_ref() == "└ " {
                             sp0.content = "  ".into();
                             sp0.style = sp0.style.add_modifier(Modifier::DIM);
                         }
-                    }
                 }
-            }
             let out = trim_empty_lines(out_raw);
             let pre_rows: u16 = Paragraph::new(Text::from(pre))
                 .wrap(Wrap { trim: false })
@@ -353,19 +349,18 @@ impl HistoryCell for MergedExecCell {
                     added_corner = true;
                 } else {
                     // For subsequent segments, replace any leading corner with two spaces
-                    if let Some(sp0) = first.spans.get_mut(0) {
-                        if sp0.content.as_ref() == "└ " {
+                    if let Some(sp0) = first.spans.get_mut(0)
+                        && sp0.content.as_ref() == "└ " {
                             sp0.content = "  ".into();
                             sp0.style = sp0.style.add_modifier(Modifier::DIM);
                         }
-                    }
                 }
             }
         };
 
         // Special aggregated rendering for Read: collapse file ranges
-        if self.kind == ExecKind::Read {
-            if let Some(agg_pre) = self.aggregated_read_preamble_lines() {
+        if self.kind == ExecKind::Read
+            && let Some(agg_pre) = self.aggregated_read_preamble_lines() {
                 let pre_text = Text::from(agg_pre);
                 let pre_wrap_width = area.width;
                 let pre_total: u16 = Paragraph::new(pre_text.clone())
@@ -452,7 +447,6 @@ impl HistoryCell for MergedExecCell {
             }
 
             // Fallback: each segment retains its own preamble and output
-        }
 
         for segment in &self.segments {
             if cur_y >= end_y {

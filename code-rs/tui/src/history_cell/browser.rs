@@ -187,7 +187,7 @@ impl BrowserSessionCell {
         value: Option<String>,
         outcome: Option<String>,
     ) {
-        if self.actions.last().map_or(false, |last| {
+        if self.actions.last().is_some_and(|last| {
             last.action == action
                 && last.target == target
                 && last.value == value
@@ -211,18 +211,16 @@ impl BrowserSessionCell {
         if finish > self.total_duration {
             self.total_duration = finish;
         }
-        if let Some(outcome) = outcome {
-            if let Some(code) = extract_status_code(&outcome) {
+        if let Some(outcome) = outcome
+            && let Some(code) = extract_status_code(&outcome) {
                 self.status_code = Some(code);
             }
-        }
     }
 
     pub(crate) fn add_console_message(&mut self, message: String) {
         if self
             .console_messages
-            .last()
-            .map_or(false, |last| last == &message)
+            .last() == Some(&message)
         {
             return;
         }
@@ -316,7 +314,7 @@ impl BrowserSessionCell {
             .as_ref()
             .map(|value| value.trim())
             .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("(pending)"))
-            .map(|value| value.to_string())
+            .map(std::string::ToString::to_string)
     }
 
     fn header_summary_text(&self) -> String {
@@ -328,7 +326,7 @@ impl BrowserSessionCell {
 
         let mut title = format!("{}: {}", label, self.display_label());
         if let Some(code) = &self.status_code {
-            title.push_str(&format!(" [{}]", code));
+            title.push_str(&format!(" [{code}]"));
         }
         title
     }
@@ -405,7 +403,7 @@ impl BrowserSessionCell {
     }
 
     fn bottom_border_row(&self, body_width: usize, style: &CardStyle) -> CardRow {
-        let text_value = format!(" [Ctrl+B] View · [Esc] Stop");
+        let text_value = " [Ctrl+B] View · [Esc] Stop".to_string();
         let text = truncate_with_ellipsis(text_value.as_str(), body_width);
         let hint_style = if palette_mode() == PaletteMode::Ansi16 {
             Style::default().fg(ansi16_inverse_color())
@@ -421,7 +419,7 @@ impl BrowserSessionCell {
             .url
             .as_ref()
             .and_then(|url| Url::parse(url).ok())
-            .and_then(|parsed| parsed.host_str().map(|host| host.to_string()))
+            .and_then(|parsed| parsed.host_str().map(std::string::ToString::to_string))
     }
 
     fn display_label(&self) -> String {
@@ -432,9 +430,7 @@ impl BrowserSessionCell {
             return host;
         }
         self
-            .url
-            .as_ref()
-            .map(|url| url.clone())
+            .url.clone()
             .unwrap_or_else(|| "Browser Session".to_string())
     }
 
@@ -600,7 +596,7 @@ impl BrowserSessionCell {
         } else {
             secondary_text_style(style)
         };
-        let text = format!("Console: {}", last);
+        let text = format!("Console: {last}");
         wrap_card_lines(text.as_str(), body_width, indent_cols, right_padding)
             .into_iter()
             .map(|wrapped| {
@@ -855,15 +851,14 @@ impl BrowserSessionCell {
     fn formatted_action_display(&self, show_minutes: bool) -> Vec<ActionDisplayLine> {
         let mut entries: Vec<ActionEntry> = Vec::new();
         let has_actions = !self.actions.is_empty();
-        if !has_actions {
-            if let Some(url) = self.url.as_ref() {
+        if !has_actions
+            && let Some(url) = self.url.as_ref() {
                 entries.push(ActionEntry {
                     label: "Opened".to_string(),
                     detail: url.clone(),
                     time_label: format!(" {}", Self::format_elapsed_label(Duration::ZERO, show_minutes)),
                 });
             }
-        }
 
         entries.extend(self.actions.iter().map(|action| {
             let time_label = format!(
@@ -906,9 +901,7 @@ impl BrowserSessionCell {
     }
 
     fn compute_screenshot_layout(&self, body_width: usize) -> Option<ScreenshotLayout> {
-        if self.screenshot_path.is_none() {
-            return None;
-        }
+        self.screenshot_path.as_ref()?;
 
         if body_width
             < SCREENSHOT_LEFT_PAD + SCREENSHOT_MIN_WIDTH + SCREENSHOT_GAP + MIN_TEXT_WIDTH + TEXT_RIGHT_PADDING
@@ -923,12 +916,7 @@ impl BrowserSessionCell {
         }
 
         let mut screenshot_cols = max_screenshot;
-        if screenshot_cols > SCREENSHOT_MAX_WIDTH {
-            screenshot_cols = SCREENSHOT_MAX_WIDTH;
-        }
-        if screenshot_cols < SCREENSHOT_MIN_WIDTH {
-            screenshot_cols = SCREENSHOT_MIN_WIDTH;
-        }
+        screenshot_cols = screenshot_cols.clamp(SCREENSHOT_MIN_WIDTH, SCREENSHOT_MAX_WIDTH);
 
         let rows = self.compute_screenshot_rows(screenshot_cols)?;
         Some(ScreenshotLayout {
@@ -944,7 +932,10 @@ impl BrowserSessionCell {
         if picker_ref.is_none() {
             *picker_ref = Some(Picker::from_fontsize((8, 16)));
         }
-        picker_ref.as_ref().unwrap().clone()
+        picker_ref
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| Picker::from_fontsize((8, 16)))
     }
 
 fn compute_screenshot_rows(&self, screenshot_cols: usize) -> Option<usize> {
@@ -971,8 +962,8 @@ fn compute_screenshot_rows(&self, screenshot_cols: usize) -> Option<usize> {
 
         let cw = cell_w as u32;
         let ch = cell_h as u32;
-        let img_w = img_w as u32;
-        let img_h = img_h as u32;
+        let img_w = img_w;
+        let img_h = img_h;
 
         let rows_by_w = (cols * cw * img_h) as f64 / (img_w * ch) as f64;
         let rows = rows_by_w.ceil().max(1.0) as usize;
@@ -984,10 +975,10 @@ fn compute_screenshot_rows(&self, screenshot_cols: usize) -> Option<usize> {
         let status = if self.completed { "done" } else { "running" };
         lines.push(format!("Browser Session: {} [{}]", self.display_label(), status));
         if let Some(url) = &self.url {
-            lines.push(format!("Opened: {}", url));
+            lines.push(format!("Opened: {url}"));
         }
         if let Some(code) = &self.status_code {
-            lines.push(format!("Status: {}", code));
+            lines.push(format!("Status: {code}"));
         }
         for action in self
             .actions
@@ -999,7 +990,7 @@ fn compute_screenshot_rows(&self, screenshot_cols: usize) -> Option<usize> {
             lines.push(format!("Action: {}", format_action_line(action)));
         }
         if let Some(path) = &self.screenshot_path {
-            lines.push(format!("Screenshot: {}", path));
+            lines.push(format!("Screenshot: {path}"));
         }
         lines
     }
@@ -1071,11 +1062,10 @@ impl HistoryCell for BrowserSessionCell {
             .scroll((skip_rows, 0))
             .render(render_area, buf);
 
-        if let Some(layout) = screenshot_meta.as_ref() {
-            if let Some(path) = self.screenshot_path.as_ref() {
+        if let Some(layout) = screenshot_meta.as_ref()
+            && let Some(path) = self.screenshot_path.as_ref() {
                 self.render_screenshot_preview(render_area, buf, skip_rows, layout, path);
             }
-        }
 
         let clear_start = area.x + draw_width;
         let clear_end = area.x + area.width;
@@ -1228,7 +1218,7 @@ impl BrowserSessionCell {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("screenshot");
-        let placeholder_text = format!("Screenshot:\n{}", filename);
+        let placeholder_text = format!("Screenshot:\n{filename}");
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1408,7 +1398,7 @@ fn format_action_entry(action: &BrowserAction, time_label: String) -> ActionEntr
         "click" | "mouse_click" => {
             let target = action.target.as_deref().unwrap_or("").trim();
             let detail = if target.starts_with('(') && target.ends_with(')') {
-                format!("at {}", target)
+                format!("at {target}")
             } else if !target.is_empty() {
                 target.to_string()
             } else if let Some(value) = action.value.as_deref() {
@@ -1457,23 +1447,23 @@ fn format_action_entry(action: &BrowserAction, time_label: String) -> ActionEntr
             let dest = action
                 .target
                 .as_deref()
-                .map(|value| sanitize_nav_text(value))
+                .map(sanitize_nav_text)
                 .filter(|s| !s.is_empty())
                 .or_else(|| {
                     action
                         .value
                         .as_deref()
-                        .map(|value| sanitize_nav_text(value))
+                        .map(sanitize_nav_text)
                         .filter(|s| !s.is_empty())
                 })
                 .or_else(|| {
                     action
                         .outcome
                         .as_deref()
-                        .map(|value| sanitize_nav_text(value))
+                        .map(sanitize_nav_text)
                         .filter(|s| !s.is_empty())
                 })
-                .unwrap_or_else(|| "".to_string());
+                .unwrap_or_default();
             ActionEntry {
                 label: "Opened".to_string(),
                 detail: dest,
@@ -1503,9 +1493,9 @@ fn format_action_entry(action: &BrowserAction, time_label: String) -> ActionEntr
                 .unwrap_or_else(|| {
                     format_action_summary(action)
                         .strip_prefix(other)
-                        .map(|suffix| suffix.trim_start_matches(|c| c == ' ' || c == ':' || c == '-'))
+                        .map(|suffix| suffix.trim_start_matches([' ', ':', '-']))
                         .filter(|suffix| !suffix.is_empty())
-                        .map(|suffix| suffix.to_string())
+                        .map(std::string::ToString::to_string)
                         .unwrap_or_else(|| format_action_summary(action))
                 });
             ActionEntry {
@@ -1519,9 +1509,9 @@ fn format_action_entry(action: &BrowserAction, time_label: String) -> ActionEntr
             let label = titleize_action(action.action.as_str());
             let trimmed = summary
                 .strip_prefix(action.action.as_str())
-                .map(|suffix| suffix.trim_start_matches(|c| c == ' ' || c == ':' || c == '-'))
+                .map(|suffix| suffix.trim_start_matches([' ', ':', '-']))
                 .filter(|suffix| !suffix.is_empty())
-                .map(|suffix| suffix.to_string())
+                .map(std::string::ToString::to_string)
                 .unwrap_or_else(|| summary.clone());
             ActionEntry {
                 label,
@@ -1539,7 +1529,7 @@ fn titleize_action(raw: &str) -> String {
         if let Some(first) = chars.next() {
             let first_upper = first.to_uppercase().collect::<String>();
             let rest = chars.as_str().to_ascii_lowercase();
-            words.push(format!("{}{}", first_upper, rest));
+            words.push(format!("{first_upper}{rest}"));
         }
     }
     if words.is_empty() {
@@ -1597,7 +1587,7 @@ fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> 
         return None;
     }
     for (idx, prefix_byte) in prefix_bytes.iter().enumerate() {
-        if text_bytes[idx].to_ascii_lowercase() != prefix_byte.to_ascii_lowercase() {
+        if !text_bytes[idx].eq_ignore_ascii_case(prefix_byte) {
             return None;
         }
     }
@@ -1614,27 +1604,27 @@ fn format_action_line(action: &BrowserAction) -> String {
         "click" | "mouse_click" => {
             let display = target.trim();
             if display.starts_with('(') {
-                format!("Clicked at {}", display)
+                format!("Clicked at {display}")
             } else if !display.is_empty() {
-                format!("Clicked {}", display)
+                format!("Clicked {display}")
             } else {
                 "Clicked".to_string()
             }
         }
         "press_key" | "key" | "press" => {
             let key = value.or(outcome).unwrap_or("?");
-            format!("Pressed key: {}", key)
+            format!("Pressed key: {key}")
         }
         "type" | "input" | "enter_text" | "fill" | "insert_text" => {
             let typed = value.or(outcome).unwrap_or("?");
-            format!("Typed: {}", typed)
+            format!("Typed: {typed}")
         }
         "navigate" | "open" => {
             let dest = value
                 .or(action.target.as_deref())
                 .or(outcome)
                 .unwrap_or("?");
-            format!("Navigated to {}", dest)
+            format!("Navigated to {dest}")
         }
         other => {
             let summary = format_action_summary(action);
@@ -1662,7 +1652,7 @@ fn extract_status_code(outcome: &str) -> Option<String> {
     }
     let code: String = trimmed
         .chars()
-        .take_while(|c| c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
         .collect();
     if code.len() == 3 {
         Some(code)

@@ -116,7 +116,7 @@ pub async fn tail_events(target: &BridgeTarget, level: &str, raw: bool) -> Resul
     let levels = vec![normalise_level(level)?];
     let caps = DEFAULT_CAPABILITIES
         .iter()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>();
     let (mut tx, mut rx) = connect_and_subscribe(target, &levels, &caps).await?;
 
@@ -138,14 +138,13 @@ pub async fn tail_events(target: &BridgeTarget, level: &str, raw: bool) -> Resul
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         if raw {
-                            println!("{}", text);
+                            println!("{text}");
                             continue;
                         }
-                        if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                            if let Some(line) = format_bridge_message(&val) {
-                                println!("{}", line);
+                        if let Ok(val) = serde_json::from_str::<Value>(&text)
+                            && let Some(line) = format_bridge_message(&val) {
+                                println!("{line}");
                             }
-                        }
                     }
                     Some(Ok(Message::Binary(_))) => {}
                     Some(Ok(Message::Close(_))) => break,
@@ -266,20 +265,18 @@ fn default_levels() -> Vec<String> {
 }
 
 fn compute_staleness(meta: &BridgeMeta, path: &Path) -> (bool, Option<i64>) {
-    if let Some(hb) = &meta.heartbeat_at {
-        if let Ok(ts) = DateTime::parse_from_rfc3339(hb) {
+    if let Some(hb) = &meta.heartbeat_at
+        && let Ok(ts) = DateTime::parse_from_rfc3339(hb) {
             let age = Utc::now().signed_duration_since(ts.with_timezone(&Utc));
             return (age.num_milliseconds() > HEARTBEAT_STALE_MS, Some(age.num_milliseconds()));
         }
-    }
 
-    if let Ok(stat) = std::fs::metadata(path) {
-        if let Ok(modified) = stat.modified() {
+    if let Ok(stat) = std::fs::metadata(path)
+        && let Ok(modified) = stat.modified() {
             let modified: DateTime<Utc> = modified.into();
             let age = Utc::now().signed_duration_since(modified);
             return (age.num_milliseconds() > HEARTBEAT_STALE_MS, Some(age.num_milliseconds()));
         }
-    }
 
     (false, None)
 }
@@ -347,13 +344,13 @@ async fn wait_for_type(
     expected: &[&str],
     dur: Duration,
 ) -> Result<Option<Value>> {
-    let expected_lower: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+    let expected_lower: Vec<String> = expected.iter().map(std::string::ToString::to_string).collect();
     let found = timeout(dur, async {
         while let Some(msg) = rx.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
-                    if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                        if val
+                    if let Ok(val) = serde_json::from_str::<Value>(&text)
+                        && val
                             .get("type")
                             .and_then(|t| t.as_str())
                             .map(|t| expected_lower.contains(&t.to_string()))
@@ -361,7 +358,6 @@ async fn wait_for_type(
                         {
                             return Some(val);
                         }
-                    }
                 }
                 Ok(Message::Binary(_)) => {}
                 Ok(Message::Close(frame)) => {
@@ -393,13 +389,12 @@ async fn wait_for_forwarded(
         while let Some(msg) = rx.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
-                    if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                        if val.get("type").and_then(|t| t.as_str()) == Some("control_forwarded")
+                    if let Ok(val) = serde_json::from_str::<Value>(&text)
+                        && val.get("type").and_then(|t| t.as_str()) == Some("control_forwarded")
                             && val.get("id").and_then(|v| v.as_str()) == Some(id)
                         {
-                            return val.get("delivered").and_then(|v| v.as_u64()).map(|v| v as usize);
+                            return val.get("delivered").and_then(serde_json::Value::as_u64).map(|v| v as usize);
                         }
-                    }
                 }
                 Ok(Message::Binary(_)) => {}
                 Ok(_) => {}
@@ -438,7 +433,7 @@ async fn wait_for_control_and_screenshot(
                                 let data_len = val
                                     .get("data")
                                     .and_then(|v| v.as_str())
-                                    .map(|s| s.len());
+                                    .map(str::len);
                                 let mime = val
                                     .get("mime")
                                     .and_then(|v| v.as_str())
@@ -482,11 +477,11 @@ fn format_bridge_message(val: &Value) -> Option<String> {
             Some(format!("⚠ drop/rate-limit: {msg}"))
         }
         "control_result" => {
-            let ok = val.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let ok = val.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false);
             let id = val.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let summary = if ok {
                 val.get("result")
-                    .map(|r| format_result(r))
+                    .map(format_result)
                     .unwrap_or_else(|| "ok".to_string())
             } else {
                 val.get("error")
@@ -501,8 +496,8 @@ fn format_bridge_message(val: &Value) -> Option<String> {
             let level = val.get("level").and_then(|v| v.as_str()).unwrap_or("info");
             let ts = val
                 .get("timestamp")
-                .and_then(|v| v.as_i64())
-                .map(|ms| format_ts(ms))
+                .and_then(serde_json::Value::as_i64)
+                .map(format_ts)
                 .unwrap_or_else(|| "--:--:--".to_string());
 
             let body = match t {
@@ -511,7 +506,7 @@ fn format_bridge_message(val: &Value) -> Option<String> {
                     let bytes = val
                         .get("data")
                         .and_then(|v| v.as_str())
-                        .map(|s| s.len())
+                        .map(str::len)
                         .unwrap_or(0);
                     format!("screenshot {mime} ({} KB)", bytes / 1024)
                 }
@@ -527,7 +522,7 @@ fn format_bridge_message(val: &Value) -> Option<String> {
                 _ => val
                     .get("message")
                     .and_then(|m| m.as_str())
-                    .map(|m| m.to_string())
+                    .map(std::string::ToString::to_string)
                     .unwrap_or_else(|| t.to_string()),
             };
 
@@ -547,7 +542,7 @@ fn format_result(val: &Value) -> String {
 }
 
 fn format_ts(ms: i64) -> String {
-    let dt = DateTime::from_timestamp_millis(ms).unwrap_or_else(|| Utc::now());
+    let dt = DateTime::from_timestamp_millis(ms).unwrap_or_else(Utc::now);
     dt.format("%H:%M:%S").to_string()
 }
 

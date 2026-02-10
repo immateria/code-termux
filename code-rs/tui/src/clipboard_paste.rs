@@ -159,11 +159,10 @@ pub fn try_decode_base64_image_to_temp_png(pasted: &str) -> Result<(PathBuf, Pas
 pub fn normalize_pasted_path(pasted: &str) -> Option<PathBuf> {
     let pasted = pasted.trim();
 
-    if let Ok(url) = url::Url::parse(pasted) {
-        if url.scheme() == "file" {
+    if let Ok(url) = url::Url::parse(pasted)
+        && url.scheme() == "file" {
             return url.to_file_path().ok();
         }
-    }
 
     let looks_like_windows_path = {
         let drive = pasted

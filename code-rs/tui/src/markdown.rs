@@ -94,7 +94,7 @@ pub(crate) fn append_markdown_with_opener_and_cwd_and_bold(
                 // downstream renderer can surface a border + title without losing lang info.
                 if fenced {
                     let label = _lang.clone().unwrap_or_else(|| "text".to_string());
-                    let sentinel = format!("⟦LANG:{}⟧", label);
+                    let sentinel = format!("⟦LANG:{label}⟧");
                     lines.push(Line::from(Span::styled(sentinel, Style::default().fg(code_bg).bg(code_bg))));
                 }
 
@@ -182,8 +182,13 @@ fn rewrite_file_citations<'a>(
 fn rewrite_web_citations<'a>(src: &'a str) -> Cow<'a, str> {
     use once_cell::sync::OnceCell;
     use regex_lite::Regex;
-    static WEB_CITE_RE: OnceCell<Regex> = OnceCell::new();
-    let re = WEB_CITE_RE.get_or_init(|| Regex::new(r"cite([^]+)").expect("failed to compile web cite regex"));
+    static WEB_CITE_RE: OnceCell<Option<Regex>> = OnceCell::new();
+    let Some(re) = WEB_CITE_RE
+        .get_or_init(|| Regex::new(r"cite([^]+)").ok())
+        .as_ref()
+    else {
+        return Cow::Borrowed(src);
+    };
     if !re.is_match(src) {
         return Cow::Borrowed(src);
     }
@@ -391,4 +396,3 @@ fn split_text_and_fences(src: &str) -> Vec<Segment> {
 
     segments
 }
-

@@ -870,8 +870,7 @@ impl<'a> BottomPaneView<'a> for ReviewSettingsView {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let header_lines = vec![
-            Line::from(Span::styled(
+        let header_lines = [Line::from(Span::styled(
                 "Configure /review and Auto Review models, resolve models, and follow-ups.",
                 Style::default().fg(colors::text_dim()),
             )),
@@ -879,8 +878,7 @@ impl<'a> BottomPaneView<'a> for ReviewSettingsView {
                 "Use ↑↓ to navigate · Enter select/open · Space toggle · ←→ adjust values · Esc close",
                 Style::default().fg(colors::text_dim()),
             )),
-            Line::from(""),
-        ];
+            Line::from("")];
         let footer_lines = {
             let mut lines = vec![Line::from(vec![
                 Span::styled("↑↓", Style::default().fg(colors::function())),
@@ -933,7 +931,7 @@ impl<'a> BottomPaneView<'a> for ReviewSettingsView {
 
         if footer_height > 0 {
             visible_lines.push(Line::from(""));
-            visible_lines.extend(footer_lines.into_iter());
+            visible_lines.extend(footer_lines);
         }
 
         Paragraph::new(visible_lines)

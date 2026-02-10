@@ -95,14 +95,13 @@ impl FileSearchManager {
 
             // If there is an in-flight search that is definitely obsolete,
             // cancel it now.
-            if let Some(active_search) = &st.active_search {
-                if !query.starts_with(&active_search.query) {
+            if let Some(active_search) = &st.active_search
+                && !query.starts_with(&active_search.query) {
                 active_search
                     .cancellation_token
                     .store(true, Ordering::Relaxed);
                 st.active_search = None;
                 }
-            }
 
             // Schedule a search to run after debounce.
             if !st.is_search_scheduled {
@@ -219,10 +218,9 @@ impl FileSearchManager {
             {
                 #[expect(clippy::unwrap_used)]
                 let mut st = search_state.lock().unwrap();
-                if let Some(active_search) = &st.active_search {
-                    if Arc::ptr_eq(&active_search.cancellation_token, &cancellation_token) {
+                if let Some(active_search) = &st.active_search
+                    && Arc::ptr_eq(&active_search.cancellation_token, &cancellation_token) {
                     st.active_search = None;
-                }
                 }
             }
             })

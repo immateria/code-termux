@@ -60,10 +60,7 @@ pub(crate) fn cell_from_record(record: &HistoryRecord, cfg: &Config) -> Box<dyn 
 }
 
 pub(crate) fn lines_from_record(record: &HistoryRecord, cfg: &Config) -> Vec<Line<'static>> {
-    match record {
-        HistoryRecord::Explore(state) => return explore_lines_from_record(state),
-        _ => {}
-    }
+    if let HistoryRecord::Explore(state) = record { return explore_lines_from_record(state) }
     cell_from_record(record, cfg).display_lines_trimmed()
 }
 

@@ -83,7 +83,7 @@ pub(super) fn handle_diff_key(chat: &mut ChatWidget<'_>, key_event: KeyEvent) ->
                         diff_text.push_str(&s);
                         diff_text.push('\n');
                     }
-                    let submit_text = format!("Please undo this:\n{}", diff_text);
+                    let submit_text = format!("Please undo this:\n{diff_text}");
                     chat.diffs.confirm = Some(super::diff_ui::DiffConfirm { text_to_submit: submit_text });
                     chat.request_redraw();
                 }
@@ -112,8 +112,7 @@ pub(super) fn handle_diff_key(chat: &mut ChatWidget<'_>, key_event: KeyEvent) ->
                         diff_text.push('\n');
                     }
                     let prompt = format!(
-                        "Can you please explain what this diff does and the reason behind it?\n\n{}",
-                        diff_text
+                        "Can you please explain what this diff does and the reason behind it?\n\n{diff_text}"
                     );
                     chat.submit_user_message(prompt.into());
                     chat.request_redraw();

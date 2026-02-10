@@ -75,7 +75,7 @@ impl UpdateSettingsView {
         let state = self
             .shared
             .lock()
-            .expect("update shared state poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
 
             if self.command.is_none() {
@@ -100,7 +100,7 @@ impl UpdateSettingsView {
                 );
                 return;
             }
-            let Some(latest) = state.latest_version.clone() else {
+            let Some(latest) = state.latest_version else {
                 self.app_event_tx.send_background_event_with_ticket(
                     &self.ticket,
                     "✅ Code is already up to date.".to_string(),
@@ -108,7 +108,9 @@ impl UpdateSettingsView {
                 return;
             };
 
-            let command = self.command.clone().expect("command checked above");
+        let Some(command) = self.command.clone() else {
+            return;
+        };
         let display = self
             .command_display
             .clone()
@@ -129,8 +131,7 @@ impl UpdateSettingsView {
         self.app_event_tx.send_background_event_with_ticket(
             &self.ticket,
             format!(
-                "↻ Complete the guided terminal steps for `{}` then restart Code to finish upgrading to {}.",
-                display, latest
+                "↻ Complete the guided terminal steps for `{display}` then restart Code to finish upgrading to {latest}."
             ),
         );
         self.is_complete = true;
@@ -140,7 +141,7 @@ impl UpdateSettingsView {
         let state = self
             .shared
             .lock()
-            .expect("update shared state poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
 
         let mut lines: Vec<Line<'static>> = Vec::new();
@@ -162,7 +163,7 @@ impl UpdateSettingsView {
         } else if let Some(latest) = &state.latest_version {
             format!("{} → {}", self.current_version, latest)
         } else {
-            format!("{}", self.current_version)
+            self.current_version.to_string()
         };
 
         let run_prefix = if run_selected { "› " } else { "  " };

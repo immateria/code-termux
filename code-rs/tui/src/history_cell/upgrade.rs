@@ -107,7 +107,7 @@ impl HistoryCell for UpgradeNoticeCell {
         if width == 0 {
             return 0;
         }
-        let box_width = width.min(TARGET_WIDTH).max(3);
+        let box_width = width.clamp(3, TARGET_WIDTH);
         let inner_width = Self::inner_width(box_width);
         let paragraph = Paragraph::new(self.text()).wrap(Wrap { trim: false });
         let text_height = paragraph.line_count(inner_width) as u16;
@@ -119,7 +119,7 @@ impl HistoryCell for UpgradeNoticeCell {
             return;
         }
 
-        let box_width = area.width.min(TARGET_WIDTH).max(3);
+        let box_width = area.width.clamp(3, TARGET_WIDTH);
         let render_area = Rect::new(area.x, area.y, box_width, area.height);
 
         let bg_style = Style::default()

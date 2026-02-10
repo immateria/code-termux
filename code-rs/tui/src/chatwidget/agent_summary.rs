@@ -14,11 +14,10 @@ pub(super) fn agent_summary_counts(config_agents: &[AgentConfig]) -> (usize, usi
     for spec in code_core::agent_defaults::agent_model_specs() {
         total += 1;
         let key = spec.slug.to_ascii_lowercase();
-        if let Some(cfg) = config_by_name.get(&key) {
-            if cfg.enabled {
+        if let Some(cfg) = config_by_name.get(&key)
+            && cfg.enabled {
                 enabled += 1;
             }
-        }
     }
 
     for cfg in config_agents {

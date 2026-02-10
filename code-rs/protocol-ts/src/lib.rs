@@ -61,8 +61,8 @@ pub fn generate_ts(out_dir: &Path, prettier: Option<&Path>) -> Result<()> {
     }
 
     // Format with Prettier by passing individual files (no shell globbing)
-    if let Some(prettier_bin) = prettier {
-        if !ts_files.is_empty() {
+    if let Some(prettier_bin) = prettier
+        && !ts_files.is_empty() {
             let status = Command::new(prettier_bin)
                 .arg("--write")
                 .args(ts_files.iter().map(|p| p.as_os_str()))
@@ -72,7 +72,6 @@ pub fn generate_ts(out_dir: &Path, prettier: Option<&Path>) -> Result<()> {
                 return Err(anyhow!("Prettier failed with status {status}"));
             }
         }
-    }
 
     Ok(())
 }

@@ -105,8 +105,8 @@ impl MessageProcessor {
     }
 
     pub(crate) async fn process_request(&mut self, request: JSONRPCRequest) {
-        if let Ok(request_json) = serde_json::to_value(request.clone()) {
-            if let Ok(code_request) = serde_json::from_value::<ClientRequest>(request_json) {
+        if let Ok(request_json) = serde_json::to_value(request.clone())
+            && let Ok(code_request) = serde_json::from_value::<ClientRequest>(request_json) {
                 // If the request is a Codex request, handle it with the Codex
                 // message processor.
                 self.code_message_processor
@@ -114,7 +114,6 @@ impl MessageProcessor {
                     .await;
                 return;
             }
-        }
 
         tracing::trace!("processing JSON-RPC request: {}", request.method);
         // Hold on to the ID so we can respond.
@@ -209,8 +208,8 @@ impl MessageProcessor {
 
         let mut request = request;
 
-        if request.method == mcp_types::InitializeRequest::METHOD {
-            if let Some(params) = request.params.as_mut() {
+        if request.method == mcp_types::InitializeRequest::METHOD
+            && let Some(params) = request.params.as_mut() {
                 if let Some(protocol_version) = params.get_mut("protocolVersion") {
                     if let Some(num) = protocol_version.as_i64() {
                         *protocol_version = serde_json::Value::String(num.to_string());
@@ -249,7 +248,6 @@ impl MessageProcessor {
                     });
                 }
             }
-        }
 
         let client_request = match McpClientRequest::try_from(request) {
             Ok(client_request) => client_request,
@@ -1148,15 +1146,14 @@ impl MessageProcessor {
 
         drop(config_guard);
 
-        if let Some(op) = configure_op {
-            if let Err(err) = entry.conversation.submit(op).await {
+        if let Some(op) = configure_op
+            && let Err(err) = entry.conversation.submit(op).await {
                 return Err(JSONRPCErrorError {
                     code: INTERNAL_ERROR_CODE,
                     message: err.to_string(),
                     data: None,
                 });
             }
-        }
 
         if let Some(models_meta) = models_meta_value {
             let notification = acp::SessionNotification {
@@ -1622,7 +1619,7 @@ fn configure_session_op_from_config(config: &Config) -> Op {
         model_text_verbosity: config.model_text_verbosity,
         user_instructions: config.user_instructions.clone(),
         base_instructions: config.base_instructions.clone(),
-        approval_policy: config.approval_policy.clone(),
+        approval_policy: config.approval_policy,
         sandbox_policy: config.sandbox_policy.clone(),
         disable_response_storage: config.disable_response_storage,
         notify: config.notify.clone(),

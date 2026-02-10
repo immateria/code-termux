@@ -136,7 +136,7 @@ impl BottomPaneView<'_> for ResumeSelectionView {
     fn desired_height(&self, _width: u16) -> u16 {
         // Include block borders (+2), optional subtitle (+1), table header (+1),
         // clamped rows, spacer (+1), footer (+1)
-        let rows = self.rows.len().min(RESUME_POPUP_ROWS).max(1) as u16;
+        let rows = self.rows.len().clamp(1, RESUME_POPUP_ROWS) as u16;
         let subtitle = if self.subtitle.is_empty() { 0 } else { 1 };
         2 + subtitle + 1 + rows + 1 + 1
     }

@@ -157,7 +157,7 @@ impl MarkdownRenderer {
                 .clone()
                 .unwrap_or_else(|| "text".to_string());
             self.lines.push(Line::from(Span::styled(
-                format!("⟦LANG:{}⟧", label),
+                format!("⟦LANG:{label}⟧"),
                 Style::default().fg(code_bg).bg(code_bg),
             )));
 
@@ -225,7 +225,7 @@ impl MarkdownRenderer {
         }
 
         // Must have space after #
-        if !trimmed.chars().nth(level).map_or(false, |c| c == ' ') {
+        if !(trimmed.chars().nth(level) == Some(' ')) {
             return None;
         }
 
@@ -308,11 +308,11 @@ impl MarkdownRenderer {
                             st.fg = Some(crate::colors::mix_toward(fg, content_fg, 0.30));
                             return Span::styled(s.content, st);
                         }
-                        return s;
+                        s
                     } else {
                         let mut st = s.style;
                         st.fg = Some(content_fg);
-                        return Span::styled(s.content, st);
+                        Span::styled(s.content, st)
                     }
                 })
                 .collect();
@@ -339,7 +339,7 @@ impl MarkdownRenderer {
                     Span::raw(" ".repeat(indent)),
                     // Make the number bold (no primary color)
                     Span::styled(
-                        format!("{}.", number_part),
+                        format!("{number_part}."),
                         Style::default().add_modifier(Modifier::BOLD).fg(content_fg),
                     ),
                     Span::raw(" "),
@@ -355,11 +355,11 @@ impl MarkdownRenderer {
                                 st.fg = Some(crate::colors::mix_toward(fg, content_fg, 0.30));
                                 return Span::styled(s.content, st);
                             }
-                            return s;
+                            s
                         } else {
                             let mut st = s.style;
                             st.fg = Some(content_fg);
-                            return Span::styled(s.content, st);
+                            Span::styled(s.content, st)
                         }
                     })
                     .collect();
@@ -502,8 +502,8 @@ impl MarkdownRenderer {
                         i += 5 + end + 6; // <sub> + content + </sub>
                         continue;
                     }
-                } else if let Some(inner) = rest.strip_prefix("<sup>") {
-                    if let Some(end) = inner.find("</sup>") {
+                } else if let Some(inner) = rest.strip_prefix("<sup>")
+                    && let Some(end) = inner.find("</sup>") {
                         if !current_text.is_empty() {
                             spans.push(Span::raw(current_text.clone()));
                             current_text.clear();
@@ -513,7 +513,6 @@ impl MarkdownRenderer {
                         i += 5 + end + 6; // <sup> + content + </sup>
                         continue;
                     }
-                }
             }
 
             // Check for inline code
@@ -646,11 +645,10 @@ impl MarkdownRenderer {
             // Autolink URLs and markdown links inside the accumulated spans.
             let mut linked = autolink_spans(std::mem::take(&mut self.current_line));
             // Apply first-sentence styling to the first rendered line.
-            if self.bold_first_sentence && !self.first_sentence_done {
-                if apply_first_sentence_style(&mut linked) {
+            if self.bold_first_sentence && !self.first_sentence_done
+                && apply_first_sentence_style(&mut linked) {
                     self.first_sentence_done = true;
                 }
-            }
             // If requested, gently tint inline code spans toward the provided
             // context text color so they blend better with the surrounding text.
             if let Some(target) = self.inline_code_tint_target {
@@ -705,7 +703,7 @@ impl MarkdownRenderer {
                 .clone()
                 .unwrap_or_else(|| "text".to_string());
             self.lines.push(Line::from(Span::styled(
-                format!("⟦LANG:{}⟧", label),
+                format!("⟦LANG:{label}⟧"),
                 Style::default().fg(code_bg).bg(code_bg),
             )));
 
@@ -752,10 +750,10 @@ fn parse_markdown_table(lines: &[&str]) -> Option<(usize, Vec<Line<'static>>)> {
     fn split_row(s: &str) -> Vec<String> {
         let mut parts: Vec<String> = s.split('|').map(|x| x.trim().to_string()).collect();
         // Trim empty edge cells introduced by leading/trailing '|'
-        if parts.first().is_some_and(|x| x.is_empty()) {
+        if parts.first().is_some_and(std::string::String::is_empty) {
             parts.remove(0);
         }
-        if parts.last().is_some_and(|x| x.is_empty()) {
+        if parts.last().is_some_and(std::string::String::is_empty) {
             parts.pop();
         }
         parts
@@ -825,7 +823,7 @@ fn parse_markdown_table(lines: &[&str]) -> Option<(usize, Vec<Line<'static>>)> {
 
     let cols = header_cells
         .len()
-        .max(body.iter().map(|r| r.len()).max().unwrap_or(0));
+        .max(body.iter().map(std::vec::Vec::len).max().unwrap_or(0));
     // Column alignment: from pipe separators with colons if present; otherwise
     // infer right alignment for numeric-only columns, left otherwise.
     #[derive(Copy, Clone)]
@@ -836,7 +834,7 @@ fn parse_markdown_table(lines: &[&str]) -> Option<(usize, Vec<Line<'static>>)> {
     let mut aligns = vec![Align::Left; cols];
     if has_pipe_sep {
         for i in 0..cols {
-            let seg = sep_segments.get(i).map(|s| s.as_str()).unwrap_or("");
+            let seg = sep_segments.get(i).map(std::string::String::as_str).unwrap_or("");
             let left_colon = seg.starts_with(':');
             let right_colon = seg.ends_with(':');
             aligns[i] = if right_colon && !left_colon {
@@ -989,8 +987,8 @@ fn parse_blockquotes(lines: &[&str]) -> Option<(usize, Vec<Line<'static>>)> {
         let content = t[idx..].to_string();
         if !first_content_seen {
             let trimmed = content.trim();
-            if let Some(inner) = trimmed.strip_prefix("[!") {
-                if let Some(end) = inner.find(']') {
+            if let Some(inner) = trimmed.strip_prefix("[!")
+                && let Some(end) = inner.find(']') {
                     let kind = inner[..end].to_ascii_uppercase();
                     match kind.as_str() {
                         "NOTE" => {
@@ -1015,7 +1013,7 @@ fn parse_blockquotes(lines: &[&str]) -> Option<(usize, Vec<Line<'static>>)> {
                         // Eagerly emit the label so the block never returns None
                         // even if there are no subsequent quoted lines.
                         if out.is_empty() {
-                            let label = format!("{}", k);
+                            let label = format!("{k}");
                             out.push(Line::from(vec![Span::styled(
                                 label,
                                 Style::default()
@@ -1027,14 +1025,13 @@ fn parse_blockquotes(lines: &[&str]) -> Option<(usize, Vec<Line<'static>>)> {
                         continue;
                     }
                 }
-            }
             first_content_seen = true;
         }
 
         // For callouts, render a label line once
-        if let Some(ref kind) = callout_kind {
-            if out.is_empty() {
-                let label = format!("{}", kind);
+        if let Some(ref kind) = callout_kind
+            && out.is_empty() {
+                let label = format!("{kind}");
                 out.push(Line::from(vec![Span::styled(
                     label,
                     Style::default()
@@ -1042,7 +1039,6 @@ fn parse_blockquotes(lines: &[&str]) -> Option<(usize, Vec<Line<'static>>)> {
                         .add_modifier(Modifier::BOLD),
                 )]));
             }
-        }
 
         // Render the quote content as raw literal text without interpreting
         // Markdown syntax inside the blockquote. This preserves the exact
@@ -1137,7 +1133,7 @@ fn apply_first_sentence_style(spans: &mut Vec<Span<'static>>) -> bool {
                 Some(c) if c.is_whitespace() => true,
                 Some('"') | Some('\'') => {
                     let n2 = chars.get(i + 2).copied();
-                    n2.is_none() || n2.map(|c| c.is_whitespace()).unwrap_or(false)
+                    n2.is_none() || n2.map(char::is_whitespace).unwrap_or(false)
                 }
                 _ => false,
             };
@@ -1210,18 +1206,28 @@ fn apply_first_sentence_style(spans: &mut Vec<Span<'static>>) -> bool {
 fn autolink_spans(spans: Vec<Span<'static>>) -> Vec<Span<'static>> {
     // Patterns: markdown [label](target), explicit http(s) URLs, and plain domains.
     // Keep conservative to avoid false positives.
-    static EXPL_URL_RE: once_cell::sync::OnceCell<Regex> = once_cell::sync::OnceCell::new();
-    static DOMAIN_RE: once_cell::sync::OnceCell<Regex> = once_cell::sync::OnceCell::new();
+    static EXPL_URL_RE: once_cell::sync::OnceCell<Option<Regex>> = once_cell::sync::OnceCell::new();
+    static DOMAIN_RE: once_cell::sync::OnceCell<Option<Regex>> = once_cell::sync::OnceCell::new();
     // We will parse Markdown links manually to support URLs with parentheses.
-    let url_re = EXPL_URL_RE.get_or_init(|| Regex::new(r"(?i)\bhttps?://[^\s)]+").unwrap());
-    let dom_re = DOMAIN_RE.get_or_init(|| {
+    let Some(url_re) = EXPL_URL_RE
+        .get_or_init(|| Regex::new(r"(?i)\bhttps?://[^\s)]+").ok())
+        .as_ref()
+    else {
+        return spans;
+    };
+    let Some(dom_re) = DOMAIN_RE
+        .get_or_init(|| {
         // Conservative bare-domain matcher (no scheme). Examples:
         //   apps.shopify.com
         //   foo.example.io/path?x=1
         // It intentionally over-matches a bit; we further filter below.
-        Regex::new(r"\b([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:/[\w\-./?%&=#]*)?)")
-            .unwrap()
-    });
+            Regex::new(r"\b([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:/[\w\-./?%&=#]*)?)")
+                .ok()
+        })
+        .as_ref()
+    else {
+        return spans;
+    };
 
     // Trim common trailing punctuation from a detected URL/domain, returning
     // (core, trailing). The trailing part will be emitted as normal text (not

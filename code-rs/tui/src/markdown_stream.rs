@@ -366,8 +366,8 @@ impl MarkdownStreamCollector {
             source.push('\n');
         }
         let source = unwrap_markdown_language_fence_if_enabled(source);
-        let source = strip_empty_fenced_code_blocks(&source);
-        source
+        
+        strip_empty_fenced_code_blocks(&source)
     }
 
     /// Returns true if the internal buffer currently ends with a newline.
@@ -425,10 +425,7 @@ fn is_potentially_volatile_list_line(text: &str) -> bool {
 #[inline]
 fn is_bare_list_marker(text: &str) -> bool {
     let t = text.trim();
-    if t == "-" || t == "-" || t == "*" || t == "*" {
-        return true;
-    }
-    if t == "-" || t == "- " || t == "*" || t == "* " {
+    if matches!(t, "-" | "*" | "- " | "* ") {
         return true;
     }
     // ordered like "1." possibly followed by a single space
@@ -488,7 +485,7 @@ fn is_short_plain_word(s: &str) -> bool {
     if t.is_empty() || t.len() > 5 {
         return false;
     }
-    t.chars().all(|c| c.is_alphanumeric())
+    t.chars().all(char::is_alphanumeric)
 }
 
 /// fence helpers are provided by `crate::render::markdown_utils`

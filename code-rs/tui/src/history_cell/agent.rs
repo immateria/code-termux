@@ -266,7 +266,7 @@ impl AgentRunCell {
             .agents
             .iter()
             .find(|preview| preview.id == id)
-            .map(|preview| Self::agent_display_name(preview))
+            .map(Self::agent_display_name)
     }
 
     pub(crate) fn set_write_mode(&mut self, write_enabled: Option<bool>) {
@@ -288,12 +288,11 @@ impl AgentRunCell {
         if cleaned.len() > MAX_SUMMARY_LINES {
             let overflow = cleaned.len() - MAX_SUMMARY_LINES;
             cleaned.drain(0..overflow);
-            if let Some(first) = cleaned.first_mut() {
-                if !first.starts_with('…') {
+            if let Some(first) = cleaned.first_mut()
+                && !first.starts_with('…') {
                     first.insert(0, ' ');
                     first.insert(0, '…');
                 }
-            }
         }
         self.summary_lines = cleaned;
     }
@@ -334,7 +333,7 @@ impl AgentRunCell {
         if self
             .actions
             .last()
-            .map_or(false, |last| last.label == text)
+            .is_some_and(|last| last.label == text)
         {
             return;
         }
@@ -404,7 +403,7 @@ impl AgentRunCell {
         let mut title = self
             .batch_label
             .as_deref()
-            .map(|value| value.trim())
+            .map(str::trim)
             .filter(|value| !value.is_empty());
         if title.is_none() {
             let name_trimmed = self.agent_name.trim();
@@ -471,14 +470,13 @@ impl AgentRunCell {
             }
             available = available.saturating_sub(name_width);
 
-            if let Some(bullet) = bullet_label {
-                if available >= bullet_width && bullet_width > 0 {
+            if let Some(bullet) = bullet_label
+                && available >= bullet_width && bullet_width > 0 {
                     segments.push(CardSegment::new(
                         bullet,
                         Self::mode_label_style(style),
                     ));
                 }
-            }
         }
 
         CardRow::new(
@@ -743,7 +741,7 @@ impl AgentRunCell {
         if self.agents.len() > MAX_AGENT_DISPLAY {
             let remaining = self.agents.len() - MAX_AGENT_DISPLAY;
             rows.push(self.body_text_row_with_indent(
-                format!("(+{} more agents)", remaining),
+                format!("(+{remaining} more agents)"),
                 body_width,
                 style,
                 secondary_text_style(style),
@@ -1125,7 +1123,7 @@ impl AgentRunCell {
             if remaining <= time_width {
                 continue;
             }
-            let padded_time = format!("{:<width$}", elapsed, width = time_width);
+            let padded_time = format!("{elapsed:<time_width$}");
             segments.push(CardSegment::new(padded_time, time_style));
             remaining = remaining.saturating_sub(time_width);
 
@@ -1206,22 +1204,20 @@ impl AgentRunCell {
             if matches!(
                 preview.status_kind,
                 AgentStatusKind::Running | AgentStatusKind::Pending
-            ) {
-                if let Some(updated_at) = preview.elapsed_updated_at {
-                    if let Some(extra) = now.checked_duration_since(updated_at) {
+            )
+                && let Some(updated_at) = preview.elapsed_updated_at
+                    && let Some(extra) = now.checked_duration_since(updated_at) {
                         duration = duration.saturating_add(extra);
                     }
-                }
-            }
             let total_secs = duration.as_secs();
             if total_secs == 0 {
                 "0s".to_string()
             } else if total_secs < 60 {
-                format!("{}s", total_secs)
+                format!("{total_secs}s")
             } else {
                 let minutes = total_secs / 60;
                 let seconds = total_secs % 60;
-                format!("{}m {:02}s", minutes, seconds)
+                format!("{minutes}m {seconds:02}s")
             }
         })
     }
@@ -1240,11 +1236,10 @@ impl AgentRunCell {
     fn build_plain_summary(&self) -> Vec<String> {
         let mut lines = Vec::new();
         lines.push(format!("Agent Run: {} [{}]", self.agent_name, self.status_label));
-        if let Some(task) = &self.task {
-            if !task.trim().is_empty() {
+        if let Some(task) = &self.task
+            && !task.trim().is_empty() {
                 lines.push(format!("Task: {}", task.trim()));
             }
-        }
         if let Some(duration) = self.duration {
             lines.push(format!("Duration: {}", format_duration_digital(duration)));
         }

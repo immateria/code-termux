@@ -2,11 +2,10 @@ use chrono::Local;
 use chrono::Timelike;
 
 fn current_hour() -> u32 {
-    if let Ok(fake) = std::env::var("CODEX_TUI_FAKE_HOUR") {
-        if let Ok(parsed) = fake.parse::<u32>() {
+    if let Ok(fake) = std::env::var("CODEX_TUI_FAKE_HOUR")
+        && let Ok(parsed) = fake.parse::<u32>() {
             return parsed.min(23);
         }
-    }
     Local::now().hour()
 }
 

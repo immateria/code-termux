@@ -117,9 +117,7 @@ pub(crate) fn normalize_overwrite_sequences(input: &str) -> String {
             }
             '\u{0008}' => {
                 // Backspace: move left one column if possible
-                if cursor > 0 {
-                    cursor -= 1;
-                }
+                cursor = cursor.saturating_sub(1);
                 i += 1;
             }
             '\u{001B}' => {
@@ -157,7 +155,7 @@ pub(crate) fn normalize_overwrite_sequences(input: &str) -> String {
                                             line[k] = ' ';
                                         }
                                         // Trim leading spaces if the whole line became spaces
-                                        while line.last().map_or(false, |c| *c == ' ') {
+                                        while line.last().is_some_and(|c| *c == ' ') {
                                             line.pop();
                                         }
                                     }
@@ -308,7 +306,7 @@ pub(crate) fn build_preview_lines(text: &str, _include_left_pipe: bool) -> Vec<L
     let mut out: Vec<Line<'static>> = Vec::new();
     if clipped {
         out.push(Line::styled(
-            format!("… output truncated to last {} chars", EXEC_PREVIEW_MAX_CHARS),
+            format!("… output truncated to last {EXEC_PREVIEW_MAX_CHARS} chars"),
             Style::default().fg(crate::colors::text_dim()),
         ));
     }
@@ -364,7 +362,7 @@ pub(crate) fn output_lines(
         }
         if !is_streaming_preview {
             lines.push(Line::styled(
-                format!("Error (exit code {})", exit_code),
+                format!("Error (exit code {exit_code})"),
                 Style::default().fg(crate::colors::error()),
             ));
         }
@@ -550,12 +548,12 @@ fn is_empty_line(line: &Line) -> bool {
 /// This ensures consistent spacing when cells are rendered together.
 pub(crate) fn trim_empty_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     // Remove ALL leading empty lines
-    while lines.first().map_or(false, is_empty_line) {
+    while lines.first().is_some_and(is_empty_line) {
         lines.remove(0);
     }
 
     // Remove ALL trailing empty lines
-    while lines.last().map_or(false, is_empty_line) {
+    while lines.last().is_some_and(is_empty_line) {
         lines.pop();
     }
 
@@ -572,7 +570,7 @@ pub(crate) fn trim_empty_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'stati
         }
 
         // Special case: If this is an empty line right after a title, skip it
-        if is_empty && result.len() == 1 && result.first().map_or(false, is_title_line) {
+        if is_empty && result.len() == 1 && result.first().is_some_and(is_title_line) {
             continue;
         }
 

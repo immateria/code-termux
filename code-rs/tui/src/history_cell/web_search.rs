@@ -276,7 +276,7 @@ impl WebSearchSessionCell {
             .unwrap_or(0)
             .max(ACTION_TIME_COLUMN_MIN_WIDTH);
 
-        let indent_text = " ".repeat(ACTION_TIME_INDENT);
+        let indent_text = " ".to_string();
         let indent_style = secondary_text_style(style);
         let time_style = primary_text_style(style);
         let separator_text = if ACTION_TIME_SEPARATOR_WIDTH > 0 {
@@ -300,7 +300,7 @@ impl WebSearchSessionCell {
                 continue;
             }
 
-            let padded_time = format!("{elapsed:<width$}", width = time_width);
+            let padded_time = format!("{elapsed:<time_width$}");
             segments.push(CardSegment::new(padded_time, time_style));
             remaining = remaining.saturating_sub(time_width);
 
@@ -358,7 +358,7 @@ impl WebSearchSessionCell {
         let mut segments = Vec::new();
         if ACTION_TIME_INDENT > 0 {
             segments.push(CardSegment::new(
-                " ".repeat(ACTION_TIME_INDENT),
+                " ".to_string(),
                 secondary_text_style(style),
             ));
         }
@@ -392,7 +392,7 @@ impl WebSearchSessionCell {
         let mut segments = Vec::new();
         if ACTION_TIME_INDENT > 0 {
             segments.push(CardSegment::new(
-                " ".repeat(ACTION_TIME_INDENT),
+                " ".to_string(),
                 secondary_text_style(style),
             ));
         }
@@ -496,7 +496,7 @@ impl crate::chatwidget::tool_cards::ToolCardCell for WebSearchSessionCell {
     }
 
     fn dedupe_signature(&self) -> Option<String> {
-        self.signature().map(|value| value.to_string())
+        self.signature().map(std::string::ToString::to_string)
     }
 }
 

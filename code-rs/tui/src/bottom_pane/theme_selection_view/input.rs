@@ -293,7 +293,7 @@ impl ThemeSelectionView {
                                         }
                                         crate::spinner::add_custom_spinner(
                                             "custom".to_string(),
-                                            display_name.clone(),
+                                            display_name,
                                             interval,
                                             frames,
                                         );
@@ -406,7 +406,7 @@ impl ThemeSelectionView {
                                         crate::theme::init_theme(
                                             &code_core::config_types::ThemeConfig {
                                                 name: ThemeName::Custom,
-                                                colors: colors.clone(),
+                                                colors,
                                                 label: Some(name.clone()),
                                                 is_dark: s.proposed_is_dark.get(),
                                             },
@@ -420,14 +420,10 @@ impl ThemeSelectionView {
                                                 .send(AppEvent::PreviewTheme(self.revert_theme_on_back));
                                         }
                                         if s.preview_on.get() {
-                                            self.send_before_next_output(format!(
-                                                "Set theme to {}",
-                                                name
-                                            ));
+                                            self.send_before_next_output(format!("Set theme to {name}"));
                                         } else {
                                             self.send_before_next_output(format!(
-                                                "Saved custom theme {} (not active)",
-                                                name
+                                                "Saved custom theme {name} (not active)"
                                             ));
                                         }
                                         go_overview = true;
@@ -496,15 +492,13 @@ impl ThemeSelectionView {
                     }
                     match s.step.get() {
                         CreateStep::Prompt => {
-                            if let Some((idx, _)) = s.prompt.grapheme_indices(true).last() {
+                            if let Some((idx, _)) = s.prompt.grapheme_indices(true).next_back() {
                                 s.prompt.truncate(idx);
                             } else {
                                 s.prompt.clear();
                             }
                         }
-                        CreateStep::Action | CreateStep::Review => {
-                            return;
-                        }
+                        CreateStep::Action | CreateStep::Review => {}
                     }
                 } else if let Mode::CreateTheme(ref mut s) = self.mode {
                     if s.is_loading.get() {
@@ -512,15 +506,13 @@ impl ThemeSelectionView {
                     }
                     match s.step.get() {
                         CreateStep::Prompt => {
-                            if let Some((idx, _)) = s.prompt.grapheme_indices(true).last() {
+                            if let Some((idx, _)) = s.prompt.grapheme_indices(true).next_back() {
                                 s.prompt.truncate(idx);
                             } else {
                                 s.prompt.clear();
                             }
                         }
-                        CreateStep::Action | CreateStep::Review => {
-                            return;
-                        }
+                        CreateStep::Action | CreateStep::Review => {}
                     }
                 }
             }
@@ -645,7 +637,7 @@ impl ThemeSelectionView {
                 if count == 0 {
                     return false;
                 }
-                let visible = (body_area.height as usize).saturating_sub(2).min(9).max(1);
+                let visible = (body_area.height as usize).saturating_sub(2).clamp(1, 9);
                 let (start, _, _) = crate::util::list_window::anchored_window(
                     self.selected_spinner_index,
                     count,

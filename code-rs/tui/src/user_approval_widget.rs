@@ -97,7 +97,7 @@ impl UserApprovalWidget<'_> {
             } => {
                 let cmd = strip_bash_lc_and_escape(command);
                 // Present a single-line summary without cwd: "codex wants to run: <cmd>"
-                let mut cmd_span: Span = cmd.clone().into();
+                let mut cmd_span: Span = cmd.into();
                 cmd_span.style = cmd_span.style.add_modifier(Modifier::DIM);
                 let mut contents: Vec<Line> = vec![
                     Line::from(""), // extra spacing above the prompt
@@ -265,14 +265,14 @@ impl UserApprovalWidget<'_> {
             ApprovalRequest::Exec { command, .. } => {
                 let cmd = strip_bash_lc_and_escape(command);
                 match decision {
-                    ReviewDecision::Approved => format!("approved: run {} (this time)", cmd),
-                    ReviewDecision::ApprovedForSession => format!("approved: run {} (every time this session)", cmd),
-                    ReviewDecision::Denied => format!("not approved: run {}", cmd),
-                    ReviewDecision::Abort => format!("canceled: run {}", cmd),
+                    ReviewDecision::Approved => format!("approved: run {cmd} (this time)"),
+                    ReviewDecision::ApprovedForSession => format!("approved: run {cmd} (every time this session)"),
+                    ReviewDecision::Denied => format!("not approved: run {cmd}"),
+                    ReviewDecision::Abort => format!("canceled: run {cmd}"),
                 }
             }
             ApprovalRequest::ApplyPatch { .. } => {
-                format!("patch approval decision: {:?}", decision)
+                format!("patch approval decision: {decision:?}")
             }
             ApprovalRequest::TerminalCommand { .. } => unreachable!("terminal approvals handled earlier"),
         };
@@ -280,7 +280,7 @@ impl UserApprovalWidget<'_> {
             message
         } else {
             // Append feedback, preserving line breaks
-            format!("{}\nfeedback:\n{}", message, feedback)
+            format!("{message}\nfeedback:\n{feedback}")
         };
         // Insert above the upcoming command begin so the decision reads first.
         self.app_event_tx
@@ -333,10 +333,10 @@ impl UserApprovalWidget<'_> {
                 semantic_prefix,
             } => {
                 self.app_event_tx.send(AppEvent::RegisterApprovedCommand {
-                    command: command.clone(),
-                    match_kind: match_kind.clone(),
+                    command,
+                    match_kind,
                     persist,
-                    semantic_prefix: semantic_prefix.clone(),
+                    semantic_prefix,
                 });
                 self.send_decision(ReviewDecision::ApprovedForSession);
             }
@@ -434,8 +434,8 @@ fn build_exec_select_options(command: &[String]) -> Vec<SelectOption> {
     });
 
     let normalized_tokens = normalized_command_tokens(command);
-    if let Some(tokens) = normalized_tokens.as_ref() {
-        if let Some(prefix) = prefix_candidate(tokens) {
+    if let Some(tokens) = normalized_tokens.as_ref()
+        && let Some(prefix) = prefix_candidate(tokens) {
             let prefix_display = strip_bash_lc_and_escape(&prefix);
             let prefix_with_wildcard = format!("{prefix_display} *");
         options.push(SelectOption {
@@ -449,7 +449,6 @@ fn build_exec_select_options(command: &[String]) -> Vec<SelectOption> {
                 semantic_prefix: Some(prefix),
             },
         });
-    }
     }
 
     options.push(SelectOption {

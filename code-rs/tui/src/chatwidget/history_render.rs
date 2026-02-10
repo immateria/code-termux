@@ -255,12 +255,11 @@ impl HistoryRenderState {
         // Walk backwards until we hit a true cell row or run out of history.
         loop {
             let mut adjusted = false;
-            if let Some((start, end)) = bottom_spacer {
-                if start > 0 && scroll_pos >= start && scroll_pos < end {
+            if let Some((start, end)) = bottom_spacer
+                && start > 0 && scroll_pos >= start && scroll_pos < end {
                     scroll_pos = start.saturating_sub(1);
                     adjusted = true;
                 }
-            }
             if !adjusted {
                 for &(start, end) in ranges.iter() {
                     if start == 0 {
@@ -374,7 +373,7 @@ impl HistoryRenderState {
 
                 let has_custom_render = req
                     .cell
-                    .map(|cell| cell.has_custom_render())
+                    .map(crate::history_cell::HistoryCell::has_custom_render)
                     .unwrap_or(false);
 
                 let prohibit_cache = matches!(req.kind, RenderRequestKind::Streaming { .. });
@@ -584,7 +583,7 @@ fn build_cached_row(line: &Line<'static>, target_width: usize) -> Box<[BufferCel
         }
         let span_style = line.style.patch(span.style);
         for symbol in UnicodeSegmentation::graphemes(span.content.as_ref(), true) {
-            if symbol.chars().any(|ch| ch.is_control()) {
+            if symbol.chars().any(char::is_control) {
                 continue;
             }
             let symbol_width = UnicodeWidthStr::width(symbol) as u16;
@@ -674,49 +673,42 @@ impl<'a> RenderRequest<'a> {
     /// `HistoryCell` cache (which may include per-cell layout bridges) and fall
     /// back to semantic lines derived from the record state.
     fn build_lines(&self, history_state: &HistoryState) -> Vec<Line<'static>> {
-        if let RenderRequestKind::Exec { id } = self.kind {
-            if let Some(HistoryRecord::Exec(record)) = history_state.record(id) {
+        if let RenderRequestKind::Exec { id } = self.kind
+            && let Some(HistoryRecord::Exec(record)) = history_state.record(id) {
                 return exec_display_lines_from_record(record);
             }
-        }
 
-        if let RenderRequestKind::MergedExec { id } = self.kind {
-            if let Some(HistoryRecord::MergedExec(record)) = history_state.record(id) {
+        if let RenderRequestKind::MergedExec { id } = self.kind
+            && let Some(HistoryRecord::MergedExec(record)) = history_state.record(id) {
                 return merged_exec_lines_from_record(record);
             }
-        }
 
         if let RenderRequestKind::Explore {
             id,
             hold_header,
             full_detail,
         } = self.kind
-        {
-            if let Some(HistoryRecord::Explore(record)) = history_state.record(id) {
+            && let Some(HistoryRecord::Explore(record)) = history_state.record(id) {
                 if full_detail {
                     return explore_lines_without_truncation(record, hold_header);
                 }
                 return explore_lines_from_record_with_force(record, hold_header);
             }
-        }
 
-        if let RenderRequestKind::Diff { id } = self.kind {
-            if let Some(HistoryRecord::Diff(record)) = history_state.record(id) {
+        if let RenderRequestKind::Diff { id } = self.kind
+            && let Some(HistoryRecord::Diff(record)) = history_state.record(id) {
                 return diff_lines_from_record(record);
             }
-        }
 
-        if let RenderRequestKind::Streaming { id } = self.kind {
-            if let Some(HistoryRecord::AssistantStream(record)) = history_state.record(id) {
+        if let RenderRequestKind::Streaming { id } = self.kind
+            && let Some(HistoryRecord::AssistantStream(record)) = history_state.record(id) {
                 return stream_lines_from_state(record, self.config, record.in_progress);
             }
-        }
 
-        if let RenderRequestKind::Assistant { id } = self.kind {
-            if let Some(HistoryRecord::AssistantMessage(record)) = history_state.record(id) {
+        if let RenderRequestKind::Assistant { id } = self.kind
+            && let Some(HistoryRecord::AssistantMessage(record)) = history_state.record(id) {
                 return assistant_markdown_lines(record, self.config);
             }
-        }
 
         if let Some(cell) = self.cell {
             return cell.display_lines_trimmed();

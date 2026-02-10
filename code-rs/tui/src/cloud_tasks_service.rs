@@ -111,18 +111,16 @@ pub async fn fetch_environments() -> Result<Vec<CloudEnvironment>> {
         USER_AGENT,
         HeaderValue::from_str(&ua).unwrap_or(HeaderValue::from_static("codex-cli")),
     );
-    if let Some(token) = &config.token {
-        if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+    if let Some(token) = &config.token
+        && let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
             headers.insert(AUTHORIZATION, value);
         }
-    }
-    if let Some(account) = &config.account_id {
-        if let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id")
+    if let Some(account) = &config.account_id
+        && let Ok(name) = HeaderName::from_bytes(b"ChatGPT-Account-Id")
             && let Ok(value) = HeaderValue::from_str(account)
         {
             headers.insert(name, value);
         }
-    }
 
     let url = environments_url(&config.base_url);
     let response = client
@@ -265,7 +263,7 @@ fn extract_chatgpt_account_id(token: &str) -> Option<String> {
     json.get("https://api.openai.com/auth")
         .and_then(|auth| auth.get("chatgpt_account_id"))
         .and_then(|id| id.as_str())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
 }
 
 #[derive(Debug, Deserialize)]

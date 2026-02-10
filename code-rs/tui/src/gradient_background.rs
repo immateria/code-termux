@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use crate::card_theme::{GradientSpec, RevealVariant};
 use crate::colors;
 use crate::glitch_animation::{gradient_multi, mix_rgb};
@@ -89,8 +91,8 @@ impl GradientBackground {
                     clamped_progress,
                     x_norm,
                     y_norm,
-                    col as u16,
-                    row as u16,
+                    col,
+                    row,
                     reveal.variant,
                 );
 
@@ -110,8 +112,8 @@ impl GradientBackground {
                     clamped_progress,
                     x_norm,
                     y_norm,
-                    col as u16,
-                    row as u16,
+                    col,
+                    row,
                     final_color,
                 );
 

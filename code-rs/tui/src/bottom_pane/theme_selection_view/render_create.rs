@@ -243,8 +243,8 @@ impl ThemeSelectionView {
         )));
         form_lines.push(Line::default());
 
-        if let Some(last) = s.thinking_lines.borrow().last().cloned() {
-            if last.starts_with("Error:") {
+        if let Some(last) = s.thinking_lines.borrow().last().cloned()
+            && last.starts_with("Error:") {
                 form_lines.push(Line::from(Span::styled(
                     last,
                     Style::default().fg(crate::colors::error()),
@@ -263,7 +263,6 @@ impl ThemeSelectionView {
                 }
                 form_lines.push(Line::default());
             }
-        }
 
         let mut description_spans: Vec<Span> = Vec::new();
         description_spans.push(Span::styled(
@@ -489,8 +488,8 @@ impl ThemeSelectionView {
         )));
         form_lines.push(Line::default());
 
-        if let Some(last) = s.thinking_lines.borrow().last().cloned() {
-            if last.starts_with("Error:") {
+        if let Some(last) = s.thinking_lines.borrow().last().cloned()
+            && last.starts_with("Error:") {
                 form_lines.push(Line::from(Span::styled(
                     last,
                     Style::default().fg(crate::colors::error()),
@@ -509,7 +508,6 @@ impl ThemeSelectionView {
                 }
                 form_lines.push(Line::default());
             }
-        }
 
         form_lines.push(Line::from(Span::styled(
             "Code can generate a custom theme just for you!",

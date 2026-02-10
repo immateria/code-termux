@@ -875,7 +875,14 @@ impl TextArea {
         {
             self.text[..first_non_ws]
                 .rfind(|c: char| c.is_whitespace())
-                .map(|i| i + self.text[i..].chars().next().unwrap().len_utf8())
+                .map(|i| {
+                    let char_len = self.text[i..]
+                        .chars()
+                        .next()
+                        .map(char::len_utf8)
+                        .unwrap_or(1);
+                    i + char_len
+                })
                 .unwrap_or(0)
         } else {
             0

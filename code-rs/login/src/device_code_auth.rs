@@ -82,11 +82,10 @@ async fn request_user_code(
             ));
         }
 
-        if looks_like_cloudflare_challenge(status, &headers, &body_text) {
-            if let Ok(via_browser) = request_user_code_via_browser(base_url, client_id).await {
+        if looks_like_cloudflare_challenge(status, &headers, &body_text)
+            && let Ok(via_browser) = request_user_code_via_browser(base_url, client_id).await {
                 return Ok(via_browser);
             }
-        }
 
         return Err(std::io::Error::other(format!(
             "device code request failed with status {status}"

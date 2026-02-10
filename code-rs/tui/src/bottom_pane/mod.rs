@@ -229,7 +229,7 @@ impl BottomPane<'_> {
         self.composer
             .set_auto_drive_style(Some(style.composer.clone()));
         if let Some(view) = self.auto_view_mut() {
-            view.set_style(style.clone());
+            view.set_style(style);
         }
 
         self.request_redraw();
@@ -377,7 +377,7 @@ impl BottomPane<'_> {
                     .as_ref()
                     .as_any()
                     .and_then(|any| any.downcast_ref::<AutoCoordinatorView>())
-                    .map(|auto_view| auto_view.composer_visible())
+                    .map(auto_coordinator_view::AutoCoordinatorView::composer_visible)
                     .unwrap_or(true);
                 if composer_visible {
                     self.composer.desired_height(width)
@@ -816,7 +816,7 @@ impl BottomPane<'_> {
         ticket: BackgroundOrderTicket,
     ) {
         let (request, ticket) = if let Some(view) = self.active_view.as_mut() {
-            match view.try_consume_approval_request(request, ticket.clone()) {
+            match view.try_consume_approval_request(request, ticket) {
                 Some((request, ticket)) => (request, ticket),
                 None => {
                     self.request_redraw();
@@ -935,7 +935,7 @@ impl BottomPane<'_> {
             .active_view
             .as_ref()
             .and_then(|view| view.as_any())
-            .is_some_and(|any| any.is::<RequestUserInputView>());
+            .is_some_and(<dyn std::any::Any + 'static>::is::<RequestUserInputView>);
         if !should_close {
             return;
         }
@@ -1002,10 +1002,10 @@ impl BottomPane<'_> {
     }
 
     pub(crate) fn show_auto_coordinator_view(&mut self, model: AutoCoordinatorViewModel) {
-        if let Some(existing) = self.active_view.as_mut() {
-            if self.active_view_kind == ActiveViewKind::AutoCoordinator {
-                if let Some(existing_any) = existing.as_any_mut() {
-                    if let Some(auto_view) = existing_any.downcast_mut::<AutoCoordinatorView>() {
+        if let Some(existing) = self.active_view.as_mut()
+            && self.active_view_kind == ActiveViewKind::AutoCoordinator
+                && let Some(existing_any) = existing.as_any_mut()
+                    && let Some(auto_view) = existing_any.downcast_mut::<AutoCoordinatorView>() {
                         auto_view.update_model(model);
                         auto_view.set_style(self.auto_drive_variant.style());
                         let status_text = self
@@ -1025,9 +1025,6 @@ impl BottomPane<'_> {
                         self.request_redraw();
                         return;
                     }
-                }
-            }
-        }
 
         if self.active_view.is_some() && self.active_view_kind != ActiveViewKind::AutoCoordinator {
             self.composer.set_render_mode(ComposerRenderMode::Full);
@@ -1283,8 +1280,8 @@ impl WidgetRef for &BottomPane<'_> {
         let mut composer_needs_render = true;
         let horizontal_padding = 1u16;
 
-        if let Some(view) = &self.active_view {
-            if !view.is_complete() {
+        if let Some(view) = &self.active_view
+            && !view.is_complete() {
                 let is_auto = matches!(self.active_view_kind, ActiveViewKind::AutoCoordinator);
                 if is_auto {
                     let content_width = area.width.saturating_sub(horizontal_padding * 2);
@@ -1292,7 +1289,7 @@ impl WidgetRef for &BottomPane<'_> {
                         .as_ref()
                         .as_any()
                         .and_then(|any| any.downcast_ref::<AutoCoordinatorView>())
-                        .map(|auto_view| auto_view.composer_visible())
+                        .map(auto_coordinator_view::AutoCoordinatorView::composer_visible)
                         .unwrap_or(true);
                     let composer_height = if composer_visible {
                         self.composer.desired_height(area.width)
@@ -1358,12 +1355,11 @@ impl WidgetRef for &BottomPane<'_> {
                     }
                 }
             }
-        }
 
         if composer_needs_render && composer_rect.width > 0 && composer_rect.height > 0 {
             let comp_bg = ratatui::style::Style::default().bg(crate::colors::background());
             fill_rect(buf, composer_rect, None, comp_bg);
-            (&self.composer).render_ref(composer_rect, buf);
+            self.composer.render_ref(composer_rect, buf);
         }
 
     }

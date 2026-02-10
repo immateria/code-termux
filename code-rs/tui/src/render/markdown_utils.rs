@@ -34,7 +34,7 @@ pub fn strip_empty_fenced_code_blocks(source: &str) -> String {
             // Capture possible language; then scan forward until closing fence.
             let mut inner = Vec::new();
             let mut closed = false;
-            while let Some(l) = lines.next() {
+            for l in lines.by_ref() {
                 if l.trim_start().starts_with("```") {
                     closed = true;
                     break;

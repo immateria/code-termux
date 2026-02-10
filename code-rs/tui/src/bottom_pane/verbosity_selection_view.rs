@@ -173,7 +173,7 @@ impl<'a> BottomPaneView<'a> for VerbositySelectionView {
             let prefix = if is_selected { "› " } else { "  " };
             let line = Line::from(vec![
                 Span::raw(prefix),
-                Span::styled(format!("{:<8}", name), style),
+                Span::styled(format!("{name:<8}"), style),
                 Span::raw(" - "),
                 Span::styled(description, Style::default().fg(crate::colors::dim())),
             ]);

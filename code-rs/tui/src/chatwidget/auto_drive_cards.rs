@@ -51,14 +51,13 @@ pub(super) fn start_session(
 ) {
     let request_ordinal = order_key.req;
 
-    if let Some(mut tracker) = chat.tools_state.auto_drive_tracker.take() {
-        if tracker.request_ordinal == request_ordinal {
+    if let Some(mut tracker) = chat.tools_state.auto_drive_tracker.take()
+        && tracker.request_ordinal == request_ordinal {
             tracker.slot.set_order_key(order_key);
             tracker.replace(chat);
             chat.tools_state.auto_drive_tracker = Some(tracker);
             return;
         }
-    }
 
     let session_id = chat.auto_drive_card_sequence;
     chat.auto_drive_card_sequence = chat.auto_drive_card_sequence.wrapping_add(1);

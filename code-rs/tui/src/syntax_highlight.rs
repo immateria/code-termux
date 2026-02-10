@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use once_cell::sync::OnceCell;
 use ratatui::text::{Line, Span};
 
@@ -64,7 +66,7 @@ pub fn init_highlight_from_config(cfg: &code_core::config_types::HighlightConfig
 }
 
 fn syntax_set() -> &'static SyntaxSet {
-    PS.get_or_init(|| SyntaxSet::load_defaults_newlines())
+    PS.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
 fn extra_syntax_set() -> &'static Option<SyntaxSet> {
@@ -314,7 +316,7 @@ fn build_code_light_theme() -> Theme {
     t
 }
 
-fn current_theme_name<'a>(ts: &'a ThemeSet) -> &'a str {
+fn current_theme_name(ts: &ThemeSet) -> &str {
     // Resolve based on configured preference; fall back to Solarized light/dark.
     let pref = match pref_cell().read() {
         Ok(g) => g.clone(),
@@ -322,10 +324,10 @@ fn current_theme_name<'a>(ts: &'a ThemeSet) -> &'a str {
     };
     match pref {
         HighlightPref::Name(ref name) => {
-            if let Some((_k, _v)) = ts.themes.iter().find(|(k, _)| k.to_ascii_lowercase() == name.to_ascii_lowercase()) {
+            if let Some((_k, _v)) = ts.themes.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
                 // SAFETY: We just looked up the same key; fetch again by exact key to get &'a str
                 for key in ts.themes.keys() {
-                    if key.to_ascii_lowercase() == name.to_ascii_lowercase() {
+                    if key.eq_ignore_ascii_case(name) {
                         return key;
                     }
                 }
@@ -344,10 +346,17 @@ fn default_theme<'a>() -> &'a Theme {
     let ts = themes();
     let name = current_theme_name(ts);
     // Prefer the Solarized themes; fall back to first available if missing.
-    ts.themes
+    if let Some(theme) = ts
+        .themes
         .get(name)
         .or_else(|| ts.themes.get(if is_light_bg() { "Code Light" } else { "Code Dark" }))
-        .unwrap_or_else(|| ts.themes.values().next().expect("at least one syntect theme"))
+        .or_else(|| ts.themes.values().next())
+    {
+        return theme;
+    }
+
+    static FALLBACK_THEME: OnceCell<Theme> = OnceCell::new();
+    FALLBACK_THEME.get_or_init(Theme::default)
 }
 
 // Build a syntect Theme derived from the active TUI theme so code in history
@@ -500,18 +509,15 @@ pub(crate) fn highlight_code_block(content: &str, lang: Option<&str>) -> Vec<Lin
     if std::ptr::eq(syntax, ps.find_syntax_plain_text()) {
         if let Some(dl) = autodetect_lang(content) {
             if let Some(s2) = try_syntax_for_lang(ps, dl) { syntax = s2; }
-            else if let Some(ref extra) = *extra_syntax_set() {
-                if let Some(s3) = try_syntax_for_lang(extra, dl) { ps = extra; syntax = s3; }
-            }
+            else if let Some(ref extra) = *extra_syntax_set()
+                && let Some(s3) = try_syntax_for_lang(extra, dl) { ps = extra; syntax = s3; }
         }
-        if std::ptr::eq(syntax, ps.find_syntax_plain_text()) {
-            if let Some(first) = content.lines().next() {
+        if std::ptr::eq(syntax, ps.find_syntax_plain_text())
+            && let Some(first) = content.lines().next() {
                 if let Some(s4) = ps.find_syntax_by_first_line(first) { syntax = s4; }
-                else if let Some(ref extra) = *extra_syntax_set() {
-                    if let Some(s5) = extra.find_syntax_by_first_line(first) { ps = extra; syntax = s5; }
-                }
+                else if let Some(ref extra) = *extra_syntax_set()
+                    && let Some(s5) = extra.find_syntax_by_first_line(first) { ps = extra; syntax = s5; }
             }
-        }
     }
 
     // TOML special-case: if labelled or looks like Cargo/Clear TOML and still plain, try INI.
@@ -519,9 +525,8 @@ pub(crate) fn highlight_code_block(content: &str, lang: Option<&str>) -> Vec<Lin
         && std::ptr::eq(syntax, ps.find_syntax_plain_text())
     {
         if let Some(sini) = ps.find_syntax_by_name("INI").or_else(|| ps.find_syntax_by_extension("ini")) { syntax = sini; }
-        else if let Some(ref extra) = *extra_syntax_set() {
-            if let Some(sini2) = extra.find_syntax_by_name("INI").or_else(|| extra.find_syntax_by_extension("ini")) { ps = extra; syntax = sini2; }
-        }
+        else if let Some(ref extra) = *extra_syntax_set()
+            && let Some(sini2) = extra.find_syntax_by_name("INI").or_else(|| extra.find_syntax_by_extension("ini")) { ps = extra; syntax = sini2; }
     }
 
     let mut highlighter = HighlightLines::new(syntax, theme);
@@ -536,12 +541,11 @@ pub(crate) fn highlight_code_block(content: &str, lang: Option<&str>) -> Vec<Lin
     // empty "line" at the end. Historically our renderer did not emit that
     // final empty line, which also avoids introducing a stray blank row
     // outside the code block background. Trim a single trailing empty Line.
-    if content.ends_with('\n') {
-        if let Some(last) = out.last() {
+    if content.ends_with('\n')
+        && let Some(last) = out.last() {
             let is_empty = last.spans.is_empty() || last.spans.iter().all(|s| s.content.is_empty());
             if is_empty { out.pop(); }
         }
-    }
     out
 }
 
@@ -685,8 +689,8 @@ fn autodetect_lang(content: &str) -> Option<&'static str> {
     }
 
     // 1) Shebang on first line
-    if let Some(first) = s.lines().next() {
-        if let Some(rest) = first.strip_prefix("#!") {
+    if let Some(first) = s.lines().next()
+        && let Some(rest) = first.strip_prefix("#!") {
             let l = rest.to_ascii_lowercase();
             if l.contains("bash") || l.contains("sh") || l.contains("zsh") {
                 return Some("bash");
@@ -701,7 +705,6 @@ fn autodetect_lang(content: &str) -> Option<&'static str> {
                 return Some("ruby");
             }
         }
-    }
 
     // Narrow to a small sample for sniffing
     let sample: String = s.lines().take(24).collect::<Vec<_>>().join("\n");
@@ -717,13 +720,11 @@ fn autodetect_lang(content: &str) -> Option<&'static str> {
     }
 
     // 3) JSON (parse to be certain when it looks like JSON)
-    if (trimmed_all.starts_with('{') && trimmed_all.ends_with('}'))
-        || (trimmed_all.starts_with('[') && trimmed_all.ends_with(']'))
-    {
-        if serde_json::from_str::<serde_json::Value>(trimmed_all).is_ok() {
+    if ((trimmed_all.starts_with('{') && trimmed_all.ends_with('}'))
+        || (trimmed_all.starts_with('[') && trimmed_all.ends_with(']')))
+        && serde_json::from_str::<serde_json::Value>(trimmed_all).is_ok() {
             return Some("json");
         }
-    }
 
     // 4) HTML/XML
     if trimmed_all.starts_with('<') && trimmed_all.contains('>') {
@@ -797,15 +798,14 @@ fn autodetect_lang(content: &str) -> Option<&'static str> {
     // Fallback to INI if it looks like sectioned key=value without YAML/hints
     if let Some(first_line) = s.lines().find(|l| !l.trim().is_empty()) {
         let fl = first_line.trim();
-        if fl.starts_with('[') && fl.ends_with(']') {
-            if s.lines().any(|l| l.contains('=')) && !s.contains(": ") {
+        if fl.starts_with('[') && fl.ends_with(']')
+            && s.lines().any(|l| l.contains('=')) && !s.contains(": ") {
                 return Some("ini");
             }
-        }
     }
     let yaml_signals = sample
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.is_empty())
         .take(20)
         .filter(|l| l.starts_with("- ") || (l.contains(':') && !l.contains("://") && !l.contains("::") && !l.contains(":=")))

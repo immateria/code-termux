@@ -56,7 +56,7 @@ pub(crate) fn run_editor(initial: &str) -> Result<String, ExternalEditorError> {
         }
     }
     if !replaced {
-        args.push(path_str.clone());
+        args.push(path_str);
     }
 
     let status = Command::new(program)

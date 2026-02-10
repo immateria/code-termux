@@ -199,11 +199,10 @@ impl TerminalOverlay {
     }
 
     pub(crate) fn cancel_pending_command(&mut self) {
-        if let Some(mut pending) = self.pending_command.take() {
-            if let Some(tx) = pending.ack.take() {
+        if let Some(mut pending) = self.pending_command.take()
+            && let Some(tx) = pending.ack.take() {
                 let _ = tx.send(TerminalCommandGate::Cancel);
             }
-        }
     }
 
     pub(crate) fn push_info_message(&mut self, message: &str) {
@@ -356,7 +355,7 @@ impl TerminalOverlay {
                 .last()
                 .map(|line| line_is_blank(line))
                 .unwrap_or(false)
-            && new_plain.last().map(|s| s.is_empty()).unwrap_or(false)
+            && new_plain.last().map(std::string::String::is_empty).unwrap_or(false)
         {
             new_lines.pop();
             new_plain.pop();
@@ -604,11 +603,11 @@ fn strip_non_sgr_csi(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\u{001B}' {
-            if matches!(chars.peek(), Some('[')) {
+        if ch == '\u{001B}'
+            && matches!(chars.peek(), Some('[')) {
                 chars.next();
                 let mut seq = String::from("\u{001B}[");
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     seq.push(next);
                     let final_byte = next as u32;
                     if (0x40..=0x7E).contains(&final_byte) {
@@ -620,7 +619,6 @@ fn strip_non_sgr_csi(input: &str) -> String {
                 }
                 continue;
             }
-        }
         out.push(ch);
     }
     out

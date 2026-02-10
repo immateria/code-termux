@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use std::env;
 
 use ratatui::style::{Color, Modifier, Style};

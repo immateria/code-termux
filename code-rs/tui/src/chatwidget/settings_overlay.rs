@@ -137,11 +137,10 @@ impl SettingsOverlayView {
 
     pub(crate) fn set_overview_rows(&mut self, rows: Vec<SettingsOverviewRow>) {
         let fallback = rows.first().map(|row| row.section).unwrap_or(self.last_section);
-        if let SettingsOverlayMode::Menu(state) = &mut self.mode {
-            if !rows.iter().any(|row| row.section == state.selected()) {
+        if let SettingsOverlayMode::Menu(state) = &mut self.mode
+            && !rows.iter().any(|row| row.section == state.selected()) {
                 state.set_selected(fallback);
             }
-        }
         self.overview_rows = rows;
     }
 

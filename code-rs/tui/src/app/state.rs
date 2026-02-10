@@ -425,8 +425,8 @@ impl BufferDiffProfiler {
         let current_buffer = frame.buffer.clone();
         self.frame_seq = self.frame_seq.saturating_add(1);
 
-        if let Some(prev_buffer) = &self.prev {
-            if self.should_log_frame() {
+        if let Some(prev_buffer) = &self.prev
+            && self.should_log_frame() {
                 if prev_buffer.area != current_buffer.area {
                     tracing::info!(
                         target: "code_tui::buffer_diff",
@@ -529,14 +529,13 @@ impl BufferDiffProfiler {
                     );
                 }
             }
-        }
 
         self.prev = Some(current_buffer);
     }
 
     fn should_log_frame(&self) -> bool {
         let interval = self.log_every.max(1) as u64;
-        interval == 1 || self.frame_seq % interval == 0
+        interval == 1 || self.frame_seq.is_multiple_of(interval)
     }
 }
 

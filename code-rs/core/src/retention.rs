@@ -279,12 +279,11 @@ pub fn apply_retention_policy(
     }
 
     // 2. Keep only the latest baseline (immutable)
-    if policy.keep_latest_baseline && !env_baselines.is_empty() {
-        if let Some(latest) = env_baselines.pop() {
+    if policy.keep_latest_baseline && !env_baselines.is_empty()
+        && let Some(latest) = env_baselines.pop() {
             stats.bytes_kept += latest.size_bytes;
             kept_items.push((latest.index, latest.item));
         }
-    }
 
     // Remove older baselines
     for item in env_baselines {

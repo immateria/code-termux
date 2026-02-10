@@ -119,8 +119,8 @@ fn chunks_to_string(chunks: &[ExecStreamChunk]) -> String {
 
 fn render_exec_stream(chunks: &[ExecStreamChunk], stream_name: &str) -> String {
     let mut body = chunks_to_string(chunks);
-    if let Some(first) = chunks.first() {
-        if first.offset > 0 {
+    if let Some(first) = chunks.first()
+        && first.offset > 0 {
             let mut notice = String::new();
             notice.push_str(&format!(
                 "… clipped {} from the start of {} (showing last {}).\n\n",
@@ -131,7 +131,6 @@ fn render_exec_stream(chunks: &[ExecStreamChunk], stream_name: &str) -> String {
             notice.push_str(&body);
             body = notice;
         }
-    }
     body
 }
 
@@ -147,7 +146,7 @@ fn format_bytes(bytes: usize) -> String {
     } else if bytes >= KIB as usize {
         format!("{:.1} KiB", bytes_f / KIB)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 
@@ -257,7 +256,7 @@ impl HistoryCell for ExecCell {
         } else {
             None
         };
-        let status_height = status_line_to_render.is_some().then_some(1).unwrap_or(0);
+        let status_height = if status_line_to_render.is_some() { 1 } else { 0 };
 
         let mut cur_y = area.y;
 
@@ -334,8 +333,8 @@ impl HistoryCell for ExecCell {
             cur_y = cur_y.saturating_add(block_height);
         }
 
-        if let Some(line) = status_line_to_render {
-            if status_height > 0 {
+        if let Some(line) = status_line_to_render
+            && status_height > 0 {
                 let status_area = Rect {
                     x: area.x,
                     y: cur_y,
@@ -346,7 +345,6 @@ impl HistoryCell for ExecCell {
                 fill_rect(buf, status_area, Some(' '), bg_style);
                 write_line(buf, status_area.x, status_area.y, status_area.width, &line, bg_style);
             }
-        }
     }
 }
 
@@ -521,15 +519,14 @@ impl ExecCell {
         if state.waiting {
             return None;
         }
-        if let Some(run_duration) = state.run_duration {
-            if run_duration >= Duration::from_secs(10) {
+        if let Some(run_duration) = state.run_duration
+            && run_duration >= Duration::from_secs(10) {
                 let text = format!("Ran for {}", format_duration(run_duration));
                 return Some(Line::styled(
                     text,
                     Style::default().fg(crate::colors::text_dim()),
                 ));
             }
-        }
         let total = state.total_wait?;
         if total.is_zero() {
             return None;
@@ -647,7 +644,7 @@ impl ExecCell {
                 if insert_at > 0 && !is_blank_line(&out[insert_at - 1]) {
                     block.push(Line::from(""));
                 }
-                block.extend(extra_lines.into_iter());
+                block.extend(extra_lines);
                 if insert_at < out.len() {
                     if !is_blank_line(&out[insert_at]) {
                         block.push(Line::from(""));
@@ -715,8 +712,8 @@ impl ExecCell {
         let mut out = output_lines(display_output, false, false);
         let has_output = !trim_empty_lines(out.clone()).is_empty();
 
-        if self.output.is_none() && has_output {
-            if let Some(last) = pre.last_mut() {
+        if self.output.is_none() && has_output
+            && let Some(last) = pre.last_mut() {
                 last.spans.insert(
                     0,
                     Span::styled(
@@ -725,13 +722,12 @@ impl ExecCell {
                     ),
                 );
             }
-        }
 
         let mut status = None;
         if self.output.is_none() {
             let status_line = self.streaming_status_line_for_label(status_label);
-            if status_line.is_some() {
-                if let Some(last) = out.last() {
+            if status_line.is_some()
+                && let Some(last) = out.last() {
                     let is_blank = last
                         .spans
                         .iter()
@@ -740,7 +736,6 @@ impl ExecCell {
                         out.pop();
                     }
                 }
-            }
             status = status_line;
         }
 
@@ -788,18 +783,14 @@ impl ExecCell {
 
         if self.parsed.is_empty() {
             let mut message = format!("{status_label}...");
-            if let Some(elapsed) = self.elapsed_since_start() {
-                if !elapsed.is_zero() {
+            if let Some(elapsed) = self.elapsed_since_start()
+                && !elapsed.is_zero() {
                     message = format!("{message} ({})", format_duration(elapsed));
                 }
-            }
             return Some(running_status_line(message));
         }
 
-        let meta = match self.parsed_meta.as_ref() {
-            Some(meta) => meta,
-            None => return None,
-        };
+        let meta = self.parsed_meta.as_ref()?;
         if !matches!(meta.action, ExecAction::Run) {
             return None;
         }
@@ -808,11 +799,10 @@ impl ExecCell {
             Some(p) => format!("{status_label}... in {p}"),
             None => format!("{status_label}..."),
         };
-        if let Some(elapsed) = self.elapsed_since_start() {
-            if !elapsed.is_zero() {
+        if let Some(elapsed) = self.elapsed_since_start()
+            && !elapsed.is_zero() {
                 message = format!("{message} ({})", format_duration(elapsed));
             }
-        }
         Some(running_status_line(message))
     }
 }

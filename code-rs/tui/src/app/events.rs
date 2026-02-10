@@ -235,7 +235,7 @@ impl App<'_> {
                     let draw_result = if !tui::stdout_ready_for_writes() {
                         self.stdout_backpressure_skips = self.stdout_backpressure_skips.saturating_add(1);
                         if self.stdout_backpressure_skips == 1
-                            || self.stdout_backpressure_skips % 25 == 0
+                            || self.stdout_backpressure_skips.is_multiple_of(25)
                         {
                             tracing::warn!(
                                 skips = self.stdout_backpressure_skips,
@@ -363,7 +363,7 @@ impl App<'_> {
                     // releases can be dropped, and synthesize a press when a release arrives
                     // without a prior press.
                     if !self.enhanced_keys_supported {
-                        let key_code = key_event.code.clone();
+                        let key_code = key_event.code;
                         match key_event.kind {
                             KeyEventKind::Press | KeyEventKind::Repeat => {
                                 self.non_enhanced_pressed_keys.insert(key_code);
@@ -410,11 +410,10 @@ impl App<'_> {
 
                     match key_event {
                         KeyEvent { code: KeyCode::Esc, kind: KeyEventKind::Press | KeyEventKind::Repeat, .. } => {
-                            if let AppState::Chat { widget } = &mut self.app_state {
-                                if widget.handle_app_esc(key_event, &mut self.last_esc_time) {
+                            if let AppState::Chat { widget } = &mut self.app_state
+                                && widget.handle_app_esc(key_event, &mut self.last_esc_time) {
                                     continue;
                                 }
-                            }
                             // Otherwise fall through
                         }
                         // Fallback: attempt clipboard image paste on common shortcuts.
@@ -639,7 +638,7 @@ impl App<'_> {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.register_approved_command(
                             command.clone(),
-                            match_kind.clone(),
+                            match_kind,
                             semantic_prefix.clone(),
                         );
                         if persist {
@@ -647,7 +646,7 @@ impl App<'_> {
                                 &self.config.code_home,
                                 &self.config.cwd,
                                 &command,
-                                match_kind.clone(),
+                                match_kind,
                             ) {
                                 widget.history_push_plain_state(history_cell::new_error_event(format!(
                                     "Failed to persist always-allow command: {err:#}",
@@ -736,11 +735,10 @@ impl App<'_> {
                     let mut remove_entry = false;
                     if let Some(run) = self.terminal_runs.get_mut(&id) {
                         let had_controller = run.controller.is_some();
-                        if let Some(tx) = run.cancel_tx.take() {
-                            if !tx.is_closed() {
+                        if let Some(tx) = run.cancel_tx.take()
+                            && !tx.is_closed() {
                                 let _ = tx.send(());
                             }
-                        }
                         run.running = false;
                         run.controller = None;
                         if let Some(writer_shared) = run.writer_tx.take() {
@@ -789,18 +787,16 @@ impl App<'_> {
                     self.start_terminal_run(id, command, Some(command_display), controller);
                 }
                 AppEvent::TerminalSendInput { id, data } => {
-                    if let Some(run) = self.terminal_runs.get_mut(&id) {
-                        if let Some(writer_shared) = run.writer_tx.as_ref() {
+                    if let Some(run) = self.terminal_runs.get_mut(&id)
+                        && let Some(writer_shared) = run.writer_tx.as_ref() {
                             let mut guard = writer_shared
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if let Some(tx) = guard.as_ref() {
-                                if tx.send(data).is_err() {
+                            if let Some(tx) = guard.as_ref()
+                                && tx.send(data).is_err() {
                                     guard.take();
                                 }
-                            }
                         }
-                    }
                 }
                 AppEvent::TerminalResize { id, rows, cols } => {
                     if rows == 0 || cols == 0 {
@@ -809,9 +805,9 @@ impl App<'_> {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.terminal_apply_resize(id, rows, cols);
                     }
-                    if let Some(run) = self.terminal_runs.get(&id) {
-                        if let Some(pty) = run.pty.as_ref() {
-                            if let Ok(guard) = pty.lock() {
+                    if let Some(run) = self.terminal_runs.get(&id)
+                        && let Some(pty) = run.pty.as_ref()
+                            && let Ok(guard) = pty.lock() {
                                 let _ = guard.resize(PtySize {
                                     rows,
                                     cols,
@@ -819,8 +815,6 @@ impl App<'_> {
                                     pixel_height: 0,
                                 });
                             }
-                        }
-                    }
                 }
                 AppEvent::TerminalUpdateMessage { id, message } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
@@ -864,20 +858,17 @@ impl App<'_> {
                     }
                 }
                 AppEvent::RequestValidationToolInstall { name, command } => {
-                    if let AppState::Chat { widget } = &mut self.app_state {
-                        if let Some(launch) = widget.launch_validation_tool_install(&name, &command) {
+                    if let AppState::Chat { widget } = &mut self.app_state
+                        && let Some(launch) = widget.launch_validation_tool_install(&name, &command) {
                             self.app_event_tx.send(AppEvent::OpenTerminal(launch));
                         }
-                    }
                 }
                 AppEvent::RunUpdateCommand { command, display, latest_version } => {
-                    if crate::updates::upgrade_ui_enabled() {
-                        if let AppState::Chat { widget } = &mut self.app_state {
-                            if let Some(launch) = widget.launch_update_command(command, display, latest_version) {
+                    if crate::updates::upgrade_ui_enabled()
+                        && let AppState::Chat { widget } = &mut self.app_state
+                            && let Some(launch) = widget.launch_update_command(command, display, latest_version) {
                                 self.app_event_tx.send(AppEvent::OpenTerminal(launch));
                             }
-                        }
-                    }
                 }
                 AppEvent::SetAutoUpgradeEnabled(enabled) => {
                     if crate::updates::upgrade_ui_enabled() {
@@ -927,11 +918,10 @@ impl App<'_> {
                     }
                 }
                 AppEvent::RequestAgentInstall { name, selected_index } => {
-                    if let AppState::Chat { widget } = &mut self.app_state {
-                        if let Some(launch) = widget.launch_agent_install(name, selected_index) {
+                    if let AppState::Chat { widget } = &mut self.app_state
+                        && let Some(launch) = widget.launch_agent_install(name, selected_index) {
                             self.app_event_tx.send(AppEvent::OpenTerminal(launch));
                         }
-                    }
                 }
                 AppEvent::AgentsOverviewSelectionChanged { index } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
@@ -1040,7 +1030,7 @@ impl App<'_> {
                     // For prompt-expanding commands (/plan, /solve, /code) we let the
                     // expanded prompt be recorded by the normal submission path.
                     if !command.is_prompt_expanding() {
-                        let _ = self
+                        self
                             .app_event_tx
                             .send(AppEvent::CodexOp(Op::AddToHistory { text: command_text.clone() }));
                     }
@@ -2165,12 +2155,12 @@ impl App<'_> {
                                 Ok(session) => {
                                     let authorize_url = session.authorize_url();
                                     let user_code = session.user_code().to_string();
-                                    let _ = tx.send(AppEvent::LoginDeviceCodeReady { authorize_url, user_code });
+                                    tx.send(AppEvent::LoginDeviceCodeReady { authorize_url, user_code });
                                     let result = session.wait_for_tokens().await.map_err(|e| e.to_string());
-                                    let _ = tx.send(AppEvent::LoginDeviceCodeComplete { result });
+                                    tx.send(AppEvent::LoginDeviceCodeComplete { result });
                                 }
                                 Err(err) => {
-                                    let _ = tx.send(AppEvent::LoginDeviceCodeFailed { message: err.to_string() });
+                                    tx.send(AppEvent::LoginDeviceCodeFailed { message: err.to_string() });
                                 }
                             }
                         });
@@ -2307,12 +2297,11 @@ impl App<'_> {
                             let mut user_seen = 0usize;
                             let mut cut = items.len();
                             for (idx, it) in items.iter().enumerate().rev() {
-                                if let code_protocol::models::ResponseItem::Message { role, .. } = it {
-                                    if role == "user" {
+                                if let code_protocol::models::ResponseItem::Message { role, .. } = it
+                                    && role == "user" {
                                         user_seen += 1;
                                         if user_seen == nth { cut = idx; break; }
                                     }
-                                }
                             }
                             items.iter().take(cut).cloned().collect::<Vec<_>>()
                         };
@@ -2436,9 +2425,8 @@ impl App<'_> {
                     }
 
                     // Prefill composer with the edited text
-                    if let AppState::Chat { widget } = &mut self.app_state {
-                        if !prefill.is_empty() { widget.insert_str(&prefill); }
-                    }
+                    if let AppState::Chat { widget } = &mut self.app_state
+                        && !prefill.is_empty() { widget.insert_str(&prefill); }
                     self.app_event_tx.send(AppEvent::RequestRedraw);
                 }
                 AppEvent::ScheduleFrameIn(duration) => {
@@ -2484,12 +2472,11 @@ fn next_event_priority_impl(
     use std::sync::mpsc::RecvTimeoutError::{Disconnected, Timeout};
 
     loop {
-        if *consecutive_high_events >= HIGH_EVENT_BURST_MAX {
-            if let Ok(ev) = bulk_rx.try_recv() {
+        if *consecutive_high_events >= HIGH_EVENT_BURST_MAX
+            && let Ok(ev) = bulk_rx.try_recv() {
                 *consecutive_high_events = 0;
                 return Some(ev);
             }
-        }
 
         if let Ok(ev) = high_rx.try_recv() {
             *consecutive_high_events = consecutive_high_events.saturating_add(1);

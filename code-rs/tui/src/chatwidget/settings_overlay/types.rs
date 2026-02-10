@@ -32,7 +32,7 @@ impl MenuState {
         Self { selected }
     }
 
-    pub(super) fn selected(&self) -> SettingsSection {
+    pub(super) fn selected(self) -> SettingsSection {
         self.selected
     }
 
@@ -51,7 +51,7 @@ impl SectionState {
         Self { active }
     }
 
-    pub(super) fn active(&self) -> SettingsSection {
+    pub(super) fn active(self) -> SettingsSection {
         self.active
     }
 

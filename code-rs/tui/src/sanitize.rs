@@ -61,7 +61,7 @@ fn expand_tabs_to_spaces(input: &str, tabstop: usize) -> String {
             match ch {
                 '\t' => {
                     let spaces = ts - (col % ts);
-                    out.extend(std::iter::repeat(' ').take(spaces));
+                    out.extend(std::iter::repeat_n(' ', spaces));
                     col += spaces;
                 }
                 '\n' => {

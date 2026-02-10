@@ -63,9 +63,9 @@ pub(crate) fn new_active_mcp_tool_call(invocation: McpInvocation) -> ToolCallCel
 #[allow(dead_code)]
 pub(crate) fn new_active_custom_tool_call(tool_name: String, args: Option<String>) -> ToolCallCell {
     let invocation_str = if let Some(args) = args {
-        format!("{}({})", tool_name, args)
+        format!("{tool_name}({args})")
     } else {
-        format!("{}()", tool_name)
+        format!("{tool_name}()")
     };
     let state = ToolCallState {
         id: HistoryId::ZERO,
@@ -165,8 +165,8 @@ pub(crate) fn new_running_browser_tool_call(
 ) -> RunningToolCallCell {
     // Parse args JSON and use compact humanized form when possible
     let mut arguments: Vec<ToolArgument> = Vec::new();
-    if let Some(args_str) = args {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&args_str) {
+    if let Some(args_str) = args
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&args_str) {
             if let Some(lines) = format_browser_args_humanized(&tool_name, &json) {
                 let summary = lines_to_plain_text(&lines);
                 if !summary.is_empty() {
@@ -179,7 +179,6 @@ pub(crate) fn new_running_browser_tool_call(
             let mut kv_args = arguments_from_json(&json);
             arguments.append(&mut kv_args);
         }
-    }
     let state = RunningToolState {
         id: HistoryId::ZERO,
         call_id: None,
@@ -216,7 +215,7 @@ fn custom_tool_running_title(tool_name: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join(" ");
-        format!("{}...", pretty)
+        format!("{pretty}...")
     }
 }
 
@@ -233,7 +232,7 @@ pub(crate) fn new_running_custom_tool_call(
         match serde_json::from_str::<serde_json::Value>(&args_str) {
             Ok(json) => {
                 if tool_name == "wait" {
-                    wait_cap_ms = json.get("timeout_ms").and_then(|v| v.as_u64());
+                    wait_cap_ms = json.get("timeout_ms").and_then(serde_json::Value::as_u64);
                     if let Some(for_what) = json.get("for").and_then(|v| v.as_str()) {
                         let cleaned = clean_wait_command(for_what);
                         arguments.push(ToolArgument {
@@ -249,7 +248,7 @@ pub(crate) fn new_running_custom_tool_call(
                         });
                         wait_has_call_id = true;
                     }
-                    let mut remaining = json.clone();
+                    let mut remaining = json;
                     if let serde_json::Value::Object(ref mut map) = remaining {
                         map.remove("for");
                         map.remove("call_id");
@@ -410,13 +409,12 @@ fn new_completed_gh_run_wait_tool_call(success: bool, result: &str) -> ToolCallC
         } else {
             let mut lines = trimmed
                 .lines()
-                .map(|line| line.trim_end())
+                .map(str::trim_end)
                 .collect::<Vec<_>>();
-            if let Some(first_non_empty) = lines.iter().position(|line| !line.trim().is_empty()) {
-                if lines[first_non_empty].trim().eq_ignore_ascii_case(title.trim()) {
+            if let Some(first_non_empty) = lines.iter().position(|line| !line.trim().is_empty())
+                && lines[first_non_empty].trim().eq_ignore_ascii_case(title.trim()) {
                     lines.remove(first_non_empty);
                 }
-            }
             while lines.first().is_some_and(|line| line.trim().is_empty()) {
                 lines.remove(0);
             }
@@ -454,11 +452,9 @@ fn gh_run_wait_title(result: &str, success: bool) -> String {
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
-    {
-        if line.to_ascii_lowercase().starts_with("github actions run") {
+        && line.to_ascii_lowercase().starts_with("github actions run") {
             return line.to_string();
         }
-    }
     if success {
         "GitHub Actions run success".to_string()
     } else {
@@ -511,17 +507,15 @@ pub(crate) fn new_completed_web_fetch_tool_call(
     // Try to parse JSON and extract the markdown field
     let mut appended_markdown = false;
     let mut body_lines: Vec<Line<'static>> = Vec::new();
-    if !result.is_empty() {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&result) {
-            if let Some(md) = value.get("markdown").and_then(|v| v.as_str()) {
+    if !result.is_empty()
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&result)
+            && let Some(md) = value.get("markdown").and_then(|v| v.as_str()) {
                 // Build a smarter sectioned preview from the raw markdown.
                 let mut sect = build_web_fetch_sectioned_preview(md, cfg);
                 dim_webfetch_emphasis_and_links(&mut sect);
                 body_lines.extend(sect);
                 appended_markdown = true;
             }
-        }
-    }
 
     // Fallback: compact preview if JSON parse failed or no markdown present
     if !appended_markdown && !result.is_empty() {
@@ -702,7 +696,7 @@ fn build_web_fetch_sectioned_preview(md: &str, cfg: &Config) -> Vec<Line<'static
         .filter_map(|(i, l)| if l.trim().is_empty() { None } else { Some(i) })
         .take(1)
         .collect();
-    let mut last_non_empty = last_non_empty_rev.clone();
+    let mut last_non_empty = last_non_empty_rev;
     last_non_empty.reverse();
 
     // Find up to 5 heading indices outside code fences
@@ -728,11 +722,10 @@ fn build_web_fetch_sectioned_preview(md: &str, cfg: &Config) -> Vec<Line<'static
                     break;
                 }
             }
-            if level >= 1 && level <= 6 {
-                if trimmed.chars().nth(level).map_or(false, |c| c == ' ') {
+            if (1..=6).contains(&level)
+                && trimmed.chars().nth(level) == Some(' ') {
                     section_heads.push(i);
                 }
-            }
         }
         i += 1;
     }
@@ -823,9 +816,9 @@ fn dim_webfetch_emphasis_and_links(lines: &mut Vec<Line<'static>>) {
             || t.starts_with('•')
             || t.starts_with('·')
             || t.starts_with('⋅')
-            || t.chars().take_while(|c| c.is_ascii_digit()).count() > 0
-                && (t.chars().skip_while(|c| c.is_ascii_digit()).next() == Some('.')
-                    || t.chars().skip_while(|c| c.is_ascii_digit()).next() == Some(')'));
+            || t.chars().take_while(char::is_ascii_digit).count() > 0
+                && (t.chars().skip_while(char::is_ascii_digit).next() == Some('.')
+                    || t.chars().skip_while(char::is_ascii_digit).next() == Some(')'));
 
         for sp in line.spans.iter_mut() {
             // Skip code block spans (have a solid code background)
@@ -889,8 +882,8 @@ fn format_browser_args_humanized(
                 .unwrap_or("click")
                 .to_lowercase();
             let (x, y) = match (
-                map.get("x").and_then(|v| v.as_f64()),
-                map.get("y").and_then(|v| v.as_f64()),
+                map.get("x").and_then(serde_json::Value::as_f64),
+                map.get("y").and_then(serde_json::Value::as_f64),
             ) {
                 (Some(x), Some(y)) => (x, y),
                 _ => return None,
@@ -900,7 +893,7 @@ fn format_browser_args_humanized(
         }
         ("browser_fetch", Value::Object(map)) => {
             if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
-                let msg = format!("└ fetch {}", url);
+                let msg = format!("└ fetch {url}");
                 Some(vec![Line::from(text(msg))])
             } else {
                 None
@@ -909,15 +902,15 @@ fn format_browser_args_humanized(
         ("browser_move", Value::Object(map)) => {
             // Prefer absolute x/y → "to (x, y)"; otherwise relative dx/dy → "by (dx, dy)".
             if let (Some(x), Some(y)) = (
-                map.get("x").and_then(|v| v.as_f64()),
-                map.get("y").and_then(|v| v.as_f64()),
+                map.get("x").and_then(serde_json::Value::as_f64),
+                map.get("y").and_then(serde_json::Value::as_f64),
             ) {
                 let msg = format!("└ to {}", fmt_xy(x, y));
                 return Some(vec![Line::from(text(msg))]);
             }
             if let (Some(dx), Some(dy)) = (
-                map.get("dx").and_then(|v| v.as_f64()),
-                map.get("dy").and_then(|v| v.as_f64()),
+                map.get("dx").and_then(serde_json::Value::as_f64),
+                map.get("dy").and_then(serde_json::Value::as_f64),
             ) {
                 let msg = format!("└ by {}", fmt_xy(dx, dy));
                 return Some(vec![Line::from(text(msg))]);
@@ -991,7 +984,7 @@ fn new_completed_browser_tool_call(
 
 // Map `agent_*` tool names to friendly titles
 fn agent_tool_title(tool_name: &str, action: Option<&str>) -> String {
-    let key = action.unwrap_or_else(|| match tool_name {
+    let key = action.unwrap_or(match tool_name {
         "agent_run" => "create",
         "agent_wait" => "wait",
         "agent_result" => "result",
@@ -1023,7 +1016,7 @@ fn agent_tool_title(tool_name: &str, action: Option<&str>) -> String {
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                format!("Agent {}", title)
+                format!("Agent {title}")
             } else {
                 "Agent Tool".to_string()
             }

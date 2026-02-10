@@ -78,8 +78,8 @@ impl HistoryCell for ToolCallCell {
         lines.push(self.header_line());
         lines.extend(render_arguments(&self.state.arguments));
 
-        if let Some(result) = &self.state.result_preview {
-            if !result.lines.is_empty() {
+        if let Some(result) = &self.state.result_preview
+            && !result.lines.is_empty() {
                 lines.push(Line::from(""));
                 for line in &result.lines {
                     lines.push(Line::styled(
@@ -94,17 +94,15 @@ impl HistoryCell for ToolCallCell {
                     ));
                 }
             }
-        }
 
-        if let Some(error) = &self.state.error_message {
-            if !error.is_empty() {
+        if let Some(error) = &self.state.error_message
+            && !error.is_empty() {
                 lines.push(Line::from(""));
                 lines.push(Line::styled(
                     error.clone(),
                     Style::default().fg(crate::colors::error()),
                 ));
             }
-        }
 
         lines.push(Line::from(""));
         lines
@@ -274,23 +272,23 @@ impl RunningToolCallCell {
         }
 
         if let Some(jobs) = self.tool_argument_json("jobs") {
-            let total = jobs.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let total = jobs.get("total").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
             let completed = jobs
                 .get("completed")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize;
             let in_progress = jobs
                 .get("in_progress")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize;
-            let queued = jobs.get("queued").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let queued = jobs.get("queued").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
             let steps_total = jobs
                 .get("steps_total")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize;
             let steps_completed = jobs
                 .get("steps_completed")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize;
             let (progress_completed, progress_total, progress_label) = if steps_total > 0 {
                 (steps_completed, steps_total, "progress (steps)")
@@ -325,7 +323,7 @@ impl RunningToolCallCell {
                 .map(|items| {
                     items
                         .iter()
-                        .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                        .filter_map(|item| item.as_str().map(std::string::ToString::to_string))
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
@@ -335,7 +333,7 @@ impl RunningToolCallCell {
                 .map(|items| {
                     items
                         .iter()
-                        .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                        .filter_map(|item| item.as_str().map(std::string::ToString::to_string))
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
@@ -429,9 +427,9 @@ impl HistoryCell for RunningToolCallCell {
             );
             let suffix = if show_elapsed {
                 let elapsed_str = Self::strip_zero_seconds_suffix(format_duration(elapsed));
-                format!(" ({} / up to {})", elapsed_str, cap_str)
+                format!(" ({elapsed_str} / up to {cap_str})")
             } else {
-                format!(" (up to {})", cap_str)
+                format!(" (up to {cap_str})")
             };
             spans.push(Span::styled(
                 suffix,

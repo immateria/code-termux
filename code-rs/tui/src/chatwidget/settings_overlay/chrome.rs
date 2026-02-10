@@ -49,7 +49,7 @@ impl ChromeSettingsContent {
 
     fn confirm(&mut self) {
         if let Some((option, _, _)) = Self::options().get(self.selected_index) {
-            let _ = self
+            self
                 .app_event_tx
                 .send(AppEvent::ChromeLaunchOptionSelected(*option, self.port));
             self.is_complete = true;
@@ -57,7 +57,7 @@ impl ChromeSettingsContent {
     }
 
     fn cancel(&mut self) {
-        let _ = self.app_event_tx.send(AppEvent::ChromeLaunchOptionSelected(
+        self.app_event_tx.send(AppEvent::ChromeLaunchOptionSelected(
             ChromeLaunchOption::Cancel,
             self.port,
         ));
@@ -133,22 +133,22 @@ impl SettingsContent for ChromeSettingsContent {
             let selected = idx == self.selected_index;
             if selected {
                 lines.push(Line::from(vec![Span::styled(
-                    format!("› {}", label),
+                    format!("› {label}"),
                     Style::default()
                         .fg(crate::colors::success())
                         .add_modifier(Modifier::BOLD),
                 )]));
                 lines.push(Line::from(vec![Span::styled(
-                    format!("  {}", description),
+                    format!("  {description}"),
                     Style::default().fg(crate::colors::secondary()),
                 )]));
             } else {
                 lines.push(Line::from(vec![Span::styled(
-                    format!("  {}", label),
+                    format!("  {label}"),
                     Style::default().fg(crate::colors::text()),
                 )]));
                 lines.push(Line::from(vec![Span::styled(
-                    format!("  {}", description),
+                    format!("  {description}"),
                     Style::default().fg(crate::colors::text_dim()),
                 )]));
             }

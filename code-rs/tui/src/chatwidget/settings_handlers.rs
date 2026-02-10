@@ -15,12 +15,11 @@ pub(super) fn handle_settings_paste(chat: &mut ChatWidget<'_>, text: String) -> 
         return false;
     }
 
-    if let Some(content) = overlay.active_content_mut() {
-        if content.handle_paste(text) {
+    if let Some(content) = overlay.active_content_mut()
+        && content.handle_paste(text) {
             chat.request_redraw();
             return true;
         }
-    }
 
     false
 }
@@ -112,14 +111,13 @@ pub(super) fn handle_settings_key(chat: &mut ChatWidget<'_>, key_event: KeyEvent
     let mut handled_by_content = false;
     let mut should_close = false;
 
-    if let Some(content) = overlay.active_content_mut() {
-        if content.handle_key(key_event) {
+    if let Some(content) = overlay.active_content_mut()
+        && content.handle_key(key_event) {
             handled_by_content = true;
             if content.is_complete() {
                 should_close = true;
             }
         }
-    }
 
     if handled_by_content {
         chat.request_redraw();

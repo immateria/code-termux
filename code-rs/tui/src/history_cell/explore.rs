@@ -186,8 +186,7 @@ pub(crate) fn explore_record_push_from_parsed(
                 annotation: existing_ann,
                 range: existing_range,
             } = &mut record.entries[idx].summary
-            {
-                if *existing_path == path_key {
+                && *existing_path == path_key {
                     let reuse = match (*existing_range, range_val) {
                         (Some((es, ee)), Some((ns, ne))) => {
                             if ns <= es && ne >= ee {
@@ -232,7 +231,6 @@ pub(crate) fn explore_record_push_from_parsed(
                         return Some(idx);
                     }
                 }
-            }
         }
     }
 
@@ -246,12 +244,10 @@ pub(crate) fn explore_record_push_from_parsed(
                 display: existing_display,
                 annotation: existing_annotation,
             } = &record.entries[idx].summary
-            {
-                if existing_display == display && existing_annotation == annotation {
+                && existing_display == display && existing_annotation == annotation {
                     record.entries[idx].status = status;
                     return Some(idx);
                 }
-            }
         }
     }
 
@@ -265,12 +261,10 @@ pub(crate) fn explore_record_push_from_parsed(
                 target: existing_target,
                 annotation: existing_annotation,
             } = &record.entries[idx].summary
-            {
-                if existing_target == target && existing_annotation == annotation {
+                && existing_target == target && existing_annotation == annotation {
                     record.entries[idx].status = status;
                     return Some(idx);
                 }
-            }
         }
     }
 
@@ -365,7 +359,7 @@ fn explore_lines_with_truncation(
         let padding = max_label_len.saturating_sub(label.chars().count()) + 1;
         let mut padded_label = String::with_capacity(label.len() + padding);
         padded_label.push_str(label);
-        padded_label.extend(std::iter::repeat(' ').take(padding));
+        padded_label.extend(std::iter::repeat_n(' ', padding));
         spans.push(Span::styled(
             padded_label,
             Style::default().fg(crate::colors::text_dim()),
@@ -387,7 +381,7 @@ fn explore_lines_with_truncation(
                     (ExecAction::List, _) => " (list error)".to_string(),
                     (ExecAction::Read, _) => " (read error)".to_string(),
                     _ => exit_code
-                        .map(|code| format!(" (exit {})", code))
+                        .map(|code| format!(" (exit {code})"))
                         .unwrap_or_else(|| " (failed)".to_string()),
                 };
                 spans.push(Span::styled(
@@ -434,17 +428,16 @@ fn entry_summary_spans(entry: &ExploreEntry) -> Vec<Span<'static>> {
     match &entry.summary {
         ExploreSummary::Search { query, path } => {
             let mut spans = Vec::new();
-            if let Some(q) = query {
-                if !q.is_empty() {
+            if let Some(q) = query
+                && !q.is_empty() {
                     spans.push(Span::styled(
                         q.clone(),
                         Style::default().fg(crate::colors::text()),
                     ));
                 }
-            }
             if let Some(p) = path {
                 spans.push(Span::styled(
-                    format!(" in {}", p),
+                    format!(" in {p}"),
                     Style::default().fg(crate::colors::text_dim()),
                 ));
             }
@@ -474,7 +467,7 @@ fn entry_summary_spans(entry: &ExploreEntry) -> Vec<Span<'static>> {
             )];
             if let Some(ann) = annotation {
                 spans.push(Span::styled(
-                    format!(" {}", ann),
+                    format!(" {ann}"),
                     Style::default().fg(crate::colors::text_dim()),
                 ));
             }
@@ -484,7 +477,7 @@ fn entry_summary_spans(entry: &ExploreEntry) -> Vec<Span<'static>> {
             let mut spans = highlight_command_summary(display);
             if let Some(annotation) = annotation {
                 spans.push(Span::styled(
-                    format!(" {}", annotation),
+                    format!(" {annotation}"),
                     Style::default().fg(crate::colors::text_dim()),
                 ));
             }
@@ -504,7 +497,7 @@ fn entry_summary_spans(entry: &ExploreEntry) -> Vec<Span<'static>> {
             }
             if let Some(annotation) = annotation {
                 spans.push(Span::styled(
-                    format!(" {}", annotation),
+                    format!(" {annotation}"),
                     Style::default().fg(crate::colors::text_dim()),
                 ));
             }
@@ -533,7 +526,7 @@ fn build_command_summary(cmd: &str, original_command: &[String]) -> CommandSumma
     let shlex = Shlex::new(trimmed);
     let parts: Vec<String> = shlex.collect();
     let mut display = if trimmed.is_empty() {
-        full_command.clone()
+        full_command
     } else if parts.is_empty() {
         trimmed.to_string()
     } else {
@@ -542,14 +535,12 @@ fn build_command_summary(cmd: &str, original_command: &[String]) -> CommandSumma
 
     let mut annotation = None;
 
-    if let Some((head, filter)) = split_pipeline_for_filter(&annotation_command) {
-        if looks_like_line_filter(&filter) {
-            if let Some(ann) = super::parse_read_line_annotation(&filter) {
+    if let Some((head, filter)) = split_pipeline_for_filter(&annotation_command)
+        && looks_like_line_filter(&filter)
+            && let Some(ann) = super::parse_read_line_annotation(&filter) {
                 annotation = Some(ann);
                 display = head;
             }
-        }
-    }
 
     if annotation.is_none() && looks_like_line_filter(&annotation_command) {
         annotation = super::parse_read_line_annotation(&annotation_command);
@@ -583,13 +574,12 @@ impl CountPipeline {
             return None;
         }
 
-        if let Some((head, tail)) = split_pipeline_for_filter(trimmed) {
-            if is_wc_count(&tail) {
+        if let Some((head, tail)) = split_pipeline_for_filter(trimmed)
+            && is_wc_count(&tail) {
                 let target = extract_count_target(&head);
                 let line_filter = looks_like_line_filter(&head).then_some(head);
                 return Some(CountPipeline { target, line_filter });
             }
-        }
 
         if is_wc_count(trimmed) {
             let target = extract_count_target(trimmed);
@@ -661,11 +651,10 @@ fn split_pipeline_for_filter(cmd: &str) -> Option<(String, String)> {
                 if idx > 0 && cmd.as_bytes()[idx - 1] == b'|' {
                     continue;
                 }
-                if let Some(&(_, next_ch)) = iter.peek() {
-                    if next_ch == '|' {
+                if let Some(&(_, next_ch)) = iter.peek()
+                    && next_ch == '|' {
                         continue;
                     }
-                }
                 last_pipe = Some(idx);
             }
             '#' if !in_single && !in_double => {
@@ -725,10 +714,10 @@ fn is_shell_like(token: &str) -> bool {
 }
 
 fn looks_like_line_filter(cmd: &str) -> bool {
-    let mut shlex = Shlex::new(cmd);
+    let shlex = Shlex::new(cmd);
     let mut tokens: Vec<String> = Vec::new();
 
-    while let Some(token) = shlex.next() {
+    for token in shlex {
         if tokens.is_empty() && is_env_assignment(&token) {
             continue;
         }
@@ -985,9 +974,9 @@ fn format_read_target(name: &str, cwd: &Path, session_root: &Path) -> String {
 
 fn annotation_for_range(start: u32, end: u32) -> Option<String> {
     if end == u32::MAX {
-        Some(format!("(from {} to end)", start))
+        Some(format!("(from {start} to end)"))
     } else {
-        Some(format!("(lines {} to {})", start, end))
+        Some(format!("(lines {start} to {end})"))
     }
 }
 

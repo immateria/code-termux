@@ -31,6 +31,12 @@ impl Default for DiagnosticsConfig {
 /// Placeholder diagnostics facade.
 pub struct AutoDriveDiagnostics;
 
+impl Default for AutoDriveDiagnostics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutoDriveDiagnostics {
     pub fn new() -> Self {
         Self

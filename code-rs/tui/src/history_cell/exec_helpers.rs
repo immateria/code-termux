@@ -95,8 +95,8 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                 )),
                 ExecAction::Run => {
                     let mut message = match &ctx_path {
-                        Some(p) => format!("{}... in {p}", status_label),
-                        None => format!("{}...", status_label),
+                        Some(p) => format!("{status_label}... in {p}"),
+                        None => format!("{status_label}..."),
                     };
                     if let Some(elapsed) = elapsed_since_start {
                         message = format!("{message} ({})", format_duration(elapsed));
@@ -110,7 +110,7 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                     ExecAction::Search => "Search".to_string(),
                     ExecAction::List => "List".to_string(),
                     ExecAction::Run => match &ctx_path {
-                        Some(p) => format!("Ran in {}", p),
+                        Some(p) => format!("Ran in {p}"),
                         None => "Ran".to_string(),
                     },
                 };
@@ -137,7 +137,7 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                     ExecAction::Search => "Search".to_string(),
                     ExecAction::List => "List".to_string(),
                     ExecAction::Run => match &ctx_path {
-                        Some(p) => format!("Ran in {}", p),
+                        Some(p) => format!("Ran in {p}"),
                         None => "Ran".to_string(),
                     },
                 };
@@ -182,7 +182,7 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
             ParsedCommand::Read { name, cmd, .. } => {
                 let mut c = name.clone();
                 if let Some(ann) = parse_read_line_annotation(cmd) {
-                    c = format!("{} {}", c, ann);
+                    c = format!("{c} {ann}");
                 }
                 ("Read".to_string(), c)
             }
@@ -194,9 +194,9 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                         let display_p = if p.ends_with('/') {
                             p.to_string()
                         } else {
-                            format!("{}/", p)
+                            format!("{p}/")
                         };
-                        ("List".to_string(), format!("{}", display_p))
+                        ("List".to_string(), format!("{display_p}"))
                     }
                 }
                 None => ("List".to_string(), "./".to_string()),
@@ -240,7 +240,7 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                 let fmt_query = |q: &str| -> String {
                     let mut parts: Vec<String> = q
                         .split('|')
-                        .map(|s| s.trim())
+                        .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .map(prettify_term)
                         .collect();
@@ -260,21 +260,21 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                         let display_p = if p.ends_with('/') {
                             p.to_string()
                         } else {
-                            format!("{}/", p)
+                            format!("{p}/")
                         };
                         (
                             "Search".to_string(),
                             format!("{} in {}", fmt_query(q), display_p),
                         )
                     }
-                    (Some(q), None) => ("Search".to_string(), format!("{}", fmt_query(q))),
+                    (Some(q), None) => ("Search".to_string(), fmt_query(q).to_string()),
                     (None, Some(p)) => {
                         let display_p = if p.ends_with('/') {
                             p.to_string()
                         } else {
-                            format!("{}/", p)
+                            format!("{p}/")
                         };
-                        ("Search".to_string(), format!(" in {}", display_p))
+                        ("Search".to_string(), format!(" in {display_p}"))
                     }
                     (None, None) => ("Search".to_string(), cmd.clone()),
                 }
@@ -351,7 +351,7 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                     };
                     let tmp = terms_part.clone();
                     let chunks: Vec<String> = if tmp.contains(", ") {
-                        tmp.split(", ").map(|s| s.to_string()).collect()
+                        tmp.split(", ").map(std::string::ToString::to_string).collect()
                     } else {
                         vec![tmp.clone()]
                     };
@@ -459,7 +459,7 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
         pre.push(Line::from(vec![
             Span::styled("└ ", Style::default().add_modifier(Modifier::DIM)),
             Span::styled(
-                format!("{display_p}"),
+                display_p,
                 Style::default().fg(crate::colors::text()),
             ),
         ]));
@@ -472,8 +472,8 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
     // Collapse adjacent Read ranges for the same file inside a single exec's preamble
     coalesce_read_ranges_in_lines_local(&mut pre);
 
-    if running_status.is_some() {
-        if let Some(last) = out.last() {
+    if running_status.is_some()
+        && let Some(last) = out.last() {
             let is_blank = last
                 .spans
                 .iter()
@@ -482,7 +482,6 @@ pub(crate) fn exec_render_parts_parsed_with_meta(
                 out.pop();
             }
         }
-    }
 
     (pre, out, running_status)
 }
@@ -544,11 +543,10 @@ pub(crate) fn coalesce_read_ranges_in_lines_local(lines: &mut Vec<Line<'static>>
             let tail = &rest[i + 1..];
             if tail.starts_with("(lines ") && tail.ends_with(")") {
                 let inner = &tail[7..tail.len() - 1];
-                if let Some((s1, s2)) = inner.split_once(" to ") {
-                    if let (Ok(a), Ok(b)) = (s1.trim().parse::<u32>(), s2.trim().parse::<u32>()) {
+                if let Some((s1, s2)) = inner.split_once(" to ")
+                    && let (Ok(a), Ok(b)) = (s1.trim().parse::<u32>(), s2.trim().parse::<u32>()) {
                         return Some((fname, a, b, prefix, idx));
                     }
-                }
             }
         }
         None
@@ -620,8 +618,8 @@ pub(crate) fn coalesce_read_ranges_in_lines_local(lines: &mut Vec<Line<'static>>
     let mut rebuilt: Vec<Line<'static>> = Vec::with_capacity(lines.len());
 
     // Heuristic: preserve an initial header line that does not start with a connector.
-    if !lines.is_empty() {
-        if lines[0]
+    if !lines.is_empty()
+        && lines[0]
             .spans
             .first()
             .map(|s| s.content.as_ref() != "└ " && s.content.as_ref() != "  ")
@@ -629,7 +627,6 @@ pub(crate) fn coalesce_read_ranges_in_lines_local(lines: &mut Vec<Line<'static>>
         {
             rebuilt.push(lines[0].clone());
         }
-    }
 
     // Sort files by their first appearance index to keep stable ordering with other files.
     files.sort_by_key(|(_n, fr)| fr.first_index);
@@ -644,7 +641,7 @@ pub(crate) fn coalesce_read_ranges_in_lines_local(lines: &mut Vec<Line<'static>>
             if i > 0 {
                 ann.push_str(", ");
             }
-            ann.push_str(&format!("{} to {}", s, e));
+            ann.push_str(&format!("{s} to {e}"));
         }
         ann.push(')');
 
@@ -658,7 +655,7 @@ pub(crate) fn coalesce_read_ranges_in_lines_local(lines: &mut Vec<Line<'static>>
 
     // Append any other non-read lines (rare for Read sections, but safe)
     // Note: keep their original order after consolidated entries
-    rebuilt.extend(non_read_lines.into_iter());
+    rebuilt.extend(non_read_lines);
 
     *lines = rebuilt;
 }
@@ -672,15 +669,14 @@ pub(crate) fn parse_read_line_annotation_with_range(cmd: &str) -> (Option<String
             let token = raw.trim();
             if token.ends_with('p') {
                 let core = &token[..token.len().saturating_sub(1)];
-                if let Some((a, b)) = core.split_once(',') {
-                    if let (Ok(start), Ok(end)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>())
+                if let Some((a, b)) = core.split_once(',')
+                    && let (Ok(start), Ok(end)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>())
                     {
                         return (
-                            Some(format!("(lines {} to {})", start, end)),
+                            Some(format!("(lines {start} to {end})")),
                             Some((start, end)),
                         );
                     }
-                }
             }
         }
     }
@@ -696,22 +692,20 @@ pub(crate) fn parse_read_line_annotation_with_range(cmd: &str) -> (Option<String
         if let Some(head_idx) = head_pos {
             // Only look for -n after the head command position
             for i in head_idx..parts.len() {
-                if parts[i] == "-n" && i + 1 < parts.len() {
-                    if let Ok(n) = parts[i + 1]
+                if parts[i] == "-n" && i + 1 < parts.len()
+                    && let Ok(n) = parts[i + 1]
                         .trim_matches('"')
                         .trim_matches('\'')
                         .parse::<u32>()
                     {
-                        return (Some(format!("(lines 1 to {})", n)), Some((1, n)));
+                        return (Some(format!("(lines 1 to {n})")), Some((1, n)));
                     }
-                }
             }
         }
     }
     // bare `head` => default 10 lines
     if lower.contains("head") && !lower.contains("-n") {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if parts.iter().any(|p| *p == "head") {
+        if cmd.split_whitespace().any(|part| part == "head") {
             return (Some("(lines 1 to 10)".to_string()), Some((1, 10)));
         }
     }
@@ -731,10 +725,10 @@ pub(crate) fn parse_read_line_annotation_with_range(cmd: &str) -> (Option<String
                     let val = parts[i + 1].trim_matches('"').trim_matches('\'');
                     if let Some(rest) = val.strip_prefix('+') {
                         if let Ok(k) = rest.parse::<u32>() {
-                            return (Some(format!("(from {} to end)", k)), Some((k, u32::MAX)));
+                            return (Some(format!("(from {k} to end)")), Some((k, u32::MAX)));
                         }
                     } else if let Ok(n) = val.parse::<u32>() {
-                        return (Some(format!("(last {} lines)", n)), None);
+                        return (Some(format!("(last {n} lines)")), None);
                     }
                 }
             }
@@ -742,8 +736,7 @@ pub(crate) fn parse_read_line_annotation_with_range(cmd: &str) -> (Option<String
     }
     // bare `tail` => default 10 lines
     if lower.contains("tail") && !lower.contains("-n") {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if parts.iter().any(|p| *p == "tail") {
+        if cmd.split_whitespace().any(|part| part == "tail") {
             return (Some("(last 10 lines)".to_string()), None);
         }
     }
@@ -783,7 +776,9 @@ pub(crate) fn insert_line_breaks_after_double_ampersand(cmd: &str) -> String {
     let mut in_double = false;
 
     while i < cmd.len() {
-        let ch = cmd[i..].chars().next().expect("valid char boundary");
+        let Some(ch) = cmd[i..].chars().next() else {
+            break;
+        };
         let ch_len = ch.len_utf8();
 
         match ch {
@@ -801,14 +796,16 @@ pub(crate) fn insert_line_breaks_after_double_ampersand(cmd: &str) -> String {
             }
             '&' if !in_single && !in_double => {
                 let next_idx = i + ch_len;
-                if next_idx < cmd.len() {
-                    if let Some(next_ch) = cmd[next_idx..].chars().next() {
-                        if next_ch == '&' {
+                if next_idx < cmd.len()
+                    && let Some(next_ch) = cmd[next_idx..].chars().next()
+                        && next_ch == '&' {
                             result.push('&');
                             result.push('&');
                             i = next_idx + next_ch.len_utf8();
                             while i < cmd.len() {
-                                let ahead = cmd[i..].chars().next().expect("valid char boundary");
+                                let Some(ahead) = cmd[i..].chars().next() else {
+                                    break;
+                                };
                                 if ahead.is_whitespace() {
                                     i += ahead.len_utf8();
                                     continue;
@@ -820,8 +817,6 @@ pub(crate) fn insert_line_breaks_after_double_ampersand(cmd: &str) -> String {
                             }
                             continue;
                         }
-                    }
-                }
             }
             _ => {}
         }
@@ -1135,7 +1130,9 @@ fn split_heredoc_script_lines(script_tokens: &[String]) -> Vec<String> {
             if next.is_none() {
                 should_break = true;
             } else {
-                let next_token = next.unwrap();
+                let Some(next_token) = next else {
+                    continue;
+                };
                 if is_statement_boundary_token(next_token) {
                     should_break = true;
                 } else if current
@@ -1243,7 +1240,7 @@ fn indent_python_lines(lines: Vec<String>) -> Vec<String> {
         let lowered_first = trimmed
             .split_whitespace()
             .next()
-            .map(|s| s.to_ascii_lowercase())
+            .map(str::to_ascii_lowercase)
             .unwrap_or_default();
 
         if pending_dedent_after_flow
@@ -1252,9 +1249,7 @@ fn indent_python_lines(lines: Vec<String>) -> Vec<String> {
                 "elif" | "else" | "except" | "finally"
             )
         {
-            if indent_level > 0 {
-                indent_level -= 1;
-            }
+            indent_level = indent_level.saturating_sub(1);
         }
         pending_dedent_after_flow = false;
 
@@ -1262,9 +1257,7 @@ fn indent_python_lines(lines: Vec<String>) -> Vec<String> {
             lowered_first.as_str(),
             "elif" | "else" | "except" | "finally"
         ) {
-            if indent_level > 0 {
-                indent_level -= 1;
-            }
+            indent_level = indent_level.saturating_sub(1);
         }
 
         let mut line = String::with_capacity(trimmed.len() + indent_level * 4);
@@ -1554,7 +1547,7 @@ fn indent_js_lines(lines: Vec<String>) -> Vec<String> {
         indented.push(line);
 
         let (opens, closes) = js_brace_deltas(trimmed);
-        indent_level = indent_level + opens;
+        indent_level += opens;
         indent_level = indent_level.saturating_sub(closes);
     }
 
@@ -1678,7 +1671,7 @@ fn split_shell_statements(script: &str) -> Vec<String> {
                     if !current.trim().is_empty() {
                         segments.push(current.trim().to_string());
                     }
-                    segments.push(format!("{}{}", current_op, current_op));
+                    segments.push(format!("{current_op}{current_op}"));
                     current.clear();
                     idx += 2;
                     continue;
@@ -2045,7 +2038,7 @@ fn new_parsed_command(
                         } else {
                             format!("{p}/")
                         };
-                        ("List".to_string(), format!("{display_p}"))
+                        ("List".to_string(), display_p.to_string())
                     }
                 }
                 None => ("List".to_string(), "./".to_string()),
@@ -2084,7 +2077,7 @@ fn new_parsed_command(
                 let fmt_query = |q: &str| -> String {
                     let mut parts: Vec<String> = q
                         .split('|')
-                        .map(|s| s.trim())
+                        .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .map(prettify_term)
                         .collect();
@@ -2111,14 +2104,14 @@ fn new_parsed_command(
                             format!("{} in {}", fmt_query(q), display_p),
                         )
                     }
-                    (Some(q), None) => ("Search".to_string(), format!("{}", fmt_query(q))),
+                    (Some(q), None) => ("Search".to_string(), fmt_query(q).to_string()),
                     (None, Some(p)) => {
                         let display_p = if p.ends_with('/') {
                             p.to_string()
                         } else {
                             format!("{p}/")
                         };
-                        ("Search".to_string(), format!(" in {}", display_p))
+                        ("Search".to_string(), format!(" in {display_p}"))
                     }
                     (None, None) => ("Search".to_string(), cmd.clone()),
                 }
@@ -2202,7 +2195,7 @@ fn new_parsed_command(
                     let tmp = terms_part.clone();
                     // First, split by ", "
                     let chunks: Vec<String> = if tmp.contains(", ") {
-                        tmp.split(", ").map(|s| s.to_string()).collect()
+                        tmp.split(", ").map(std::string::ToString::to_string).collect()
                     } else {
                         vec![tmp.clone()]
                     };
@@ -2316,7 +2309,7 @@ fn new_parsed_command(
         lines.push(Line::from(vec![
             Span::styled("└ ", Style::default().add_modifier(Modifier::DIM)),
             Span::styled(
-                format!("{display_p}"),
+                display_p,
                 Style::default().fg(crate::colors::text()),
             ),
         ]));

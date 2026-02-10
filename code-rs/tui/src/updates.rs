@@ -193,8 +193,8 @@ pub fn resolve_upgrade_resolution() -> UpgradeResolution {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(exe_path) = std::env::current_exe() {
-            if exe_path.starts_with("/opt/homebrew") || exe_path.starts_with("/usr/local") {
+        if let Ok(exe_path) = std::env::current_exe()
+            && (exe_path.starts_with("/opt/homebrew") || exe_path.starts_with("/usr/local")) {
                 return UpgradeResolution::Command {
                     command: vec![
                         "brew".to_string(),
@@ -204,7 +204,6 @@ pub fn resolve_upgrade_resolution() -> UpgradeResolution {
                     display: "brew upgrade code".to_string(),
                 };
             }
-        }
     }
 
     UpgradeResolution::Manual {
@@ -298,8 +297,7 @@ pub async fn auto_upgrade_if_enabled(config: &Config) -> anyhow::Result<AutoUpgr
                             if sudo_requires_manual_intervention(&fallback.stderr, fallback.status)
                             {
                                 outcome.user_notice = Some(format!(
-                                "Automatic upgrade needs your attention. Run `/update` to finish with `{}`.",
-                                    command_display
+                                "Automatic upgrade needs your attention. Run `/update` to finish with `{command_display}`."
                                 ));
                             }
                             warn!(
@@ -312,8 +310,7 @@ pub async fn auto_upgrade_if_enabled(config: &Config) -> anyhow::Result<AutoUpgr
                         Err(err) => {
                             warn!("auto-upgrade: sudo retry error: {err}");
                             outcome.user_notice = Some(format!(
-                                "Automatic upgrade could not escalate permissions. Run `/update` to finish with `{}`.",
-                                command_display
+                                "Automatic upgrade could not escalate permissions. Run `/update` to finish with `{command_display}`."
                             ));
                             return Ok(outcome);
                         }
@@ -411,11 +408,10 @@ impl AutoUpgradeLock {
 
 impl Drop for AutoUpgradeLock {
     fn drop(&mut self) {
-        if let Err(err) = fs::remove_file(&self.path) {
-            if err.kind() != ErrorKind::NotFound {
+        if let Err(err) = fs::remove_file(&self.path)
+            && err.kind() != ErrorKind::NotFound {
                 warn!("auto-upgrade: failed to remove lock file {}: {err}", self.path.display());
             }
-        }
     }
 }
 
@@ -611,8 +607,7 @@ async fn fetch_latest_version(originator: &str) -> anyhow::Result<VersionInfo> {
         match parse_version(&latest_tag_name) {
             Some(_) => latest_tag_name.clone(),
             None => anyhow::bail!(
-                "Failed to parse latest tag name '{}': expected 'rust-vX.Y.Z' or 'vX.Y.Z'",
-                latest_tag_name
+                "Failed to parse latest tag name '{latest_tag_name}': expected 'rust-vX.Y.Z' or 'vX.Y.Z'"
             ),
         }
     };
@@ -625,19 +620,17 @@ async fn fetch_latest_version(originator: &str) -> anyhow::Result<VersionInfo> {
 }
 
 async fn check_for_update(version_file: &Path, originator: &str) -> anyhow::Result<VersionInfo> {
-    if let Some(info) = read_version_info(version_file)? {
-        if is_cache_fresh(&info) {
+    if let Some(info) = read_version_info(version_file)?
+        && is_cache_fresh(&info) {
             return Ok(info);
         }
-    }
 
     let _guard = REFRESH_LOCK.lock().await;
 
-    if let Some(info) = read_version_info(version_file)? {
-        if is_cache_fresh(&info) {
+    if let Some(info) = read_version_info(version_file)?
+        && is_cache_fresh(&info) {
             return Ok(info);
         }
-    }
 
     let info = fetch_latest_version(originator).await?;
     write_version_info(version_file, &info).await?;

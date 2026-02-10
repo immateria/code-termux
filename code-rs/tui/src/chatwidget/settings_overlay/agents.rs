@@ -187,8 +187,7 @@ impl AgentsSettingsContent {
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-            {
-                if let Some(width) = available_width {
+                && let Some(width) = available_width {
                     let status_width = UnicodeWidthStr::width(status.0);
                     let prefix_width = 2 + max_name_width + 2 + 2 + status_width;
                     if width > prefix_width + 3 {
@@ -206,7 +205,6 @@ impl AgentsSettingsContent {
                         }
                     }
                 }
-            }
 
             if selected && !showed_desc {
                 spans.push(Span::raw("  "));
@@ -272,7 +270,7 @@ impl AgentsSettingsContent {
                 },
             ));
             spans.push(Span::styled(
-                format!("/{}", cmd),
+                format!("/{cmd}"),
                 if selected {
                     Style::default()
                         .fg(crate::colors::primary())

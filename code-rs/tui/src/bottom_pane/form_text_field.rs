@@ -112,14 +112,13 @@ impl FormTextField {
         }
 
         // If an input filter is active and this is a Char, validate and insert
-        if let KeyCode::Char(c) = key.code {
-            if matches!(self.filter, InputFilter::Id) {
+        if let KeyCode::Char(c) = key.code
+            && matches!(self.filter, InputFilter::Id) {
                 if Self::id_char_allowed(c) {
                     self.textarea.insert_str(&c.to_string());
                 }
                 return true; // consumed either way
             }
-        }
 
         // Delegate remaining keys to TextArea which already handles:
         // - Shift-modified chars
@@ -180,7 +179,7 @@ impl FormTextField {
     /// hidden while overlays are active).
     pub fn render(&self, area: Rect, buf: &mut Buffer, focused: bool) {
         // Paint text using the TextArea renderer for exact wrapping
-        let mut state = self.state.borrow().clone();
+        let mut state = *self.state.borrow();
         StatefulWidgetRef::render_ref(&(&self.textarea), area, buf, &mut state);
         // Persist any scroll changes made during rendering
         *self.state.borrow_mut() = state;
@@ -201,8 +200,8 @@ impl FormTextField {
 
         // Draw a pseudo-caret when focused without hiding the underlying glyph.
         // Invert colors on the cursor cell so the character remains visible.
-        if focused {
-            if let Some((cx, cy)) = self
+        if focused
+            && let Some((cx, cy)) = self
                 .textarea
                 .cursor_pos_with_state(area, *self.state.borrow())
             {
@@ -219,7 +218,6 @@ impl FormTextField {
                     buf[(x, cy)].set_style(style);
                 }
             }
-        }
         // Note: We intentionally do not persist state.scroll changes from a
         // read-only &self; form owns a &mut when calling this in practice.
     }

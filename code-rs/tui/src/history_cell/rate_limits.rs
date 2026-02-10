@@ -139,7 +139,7 @@ fn format_window_minutes(minutes: u64) -> String {
     }
 
     let days = (minutes as f64 / 1_440.0).round().max(1.0) as u64;
-    if days % 7 == 0 {
+    if days.is_multiple_of(7) {
         let weeks = days / 7;
         let unit = if weeks == 1 { "week" } else { "weeks" };
         return format!("{weeks} {unit} window");

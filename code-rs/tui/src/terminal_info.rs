@@ -89,15 +89,14 @@ fn parse_three_nums(s: &str) -> Option<(u32, u32, u32)> {
         if let Some(end) = s.find('t') {
             let nums_str = &s[..end];
             let parts: Vec<&str> = nums_str.split(';').collect();
-            if parts.len() == 3 {
-                if let (Ok(a), Ok(b), Ok(c)) = (
+            if parts.len() == 3
+                && let (Ok(a), Ok(b), Ok(c)) = (
                     parts[0].parse::<u32>(),
                     parts[1].parse::<u32>(),
                     parts[2].parse::<u32>(),
                 ) {
                     return Some((a, b, c));
                 }
-            }
         }
     }
     None
@@ -111,39 +110,33 @@ pub fn get_cell_size_pixels() -> Option<(u16, u16)> {
     // Try direct cell size query (CSI 16 t) -> expect: CSI 6;height;width t
     tty_w.write_all(b"\x1b[16t").ok()?;
     tty_w.flush().ok()?;
-    if let Some(reply) = read_reply(&mut tty_r, Duration::from_millis(100)) {
-        if let Some((kind, height, width)) = parse_three_nums(&reply) {
-            if kind == 6 && width > 0 && height > 0 {
+    if let Some(reply) = read_reply(&mut tty_r, Duration::from_millis(100))
+        && let Some((kind, height, width)) = parse_three_nums(&reply)
+            && kind == 6 && width > 0 && height > 0 {
                 return Some((width as u16, height as u16));
             }
-        }
-    }
 
     // Fallback: window size in pixels (CSI 14 t) -> CSI 4;win_h;win_w t
     tty_w.write_all(b"\x1b[14t").ok()?;
     tty_w.flush().ok()?;
     let (mut win_h, mut win_w) = (0u32, 0u32);
-    if let Some(reply) = read_reply(&mut tty_r, Duration::from_millis(100)) {
-        if let Some((kind, h, w)) = parse_three_nums(&reply) {
-            if kind == 4 {
+    if let Some(reply) = read_reply(&mut tty_r, Duration::from_millis(100))
+        && let Some((kind, h, w)) = parse_three_nums(&reply)
+            && kind == 4 {
                 win_h = h;
                 win_w = w;
             }
-        }
-    }
 
     // Text area in characters (CSI 18 t) -> CSI 8;rows;cols t
     tty_w.write_all(b"\x1b[18t").ok()?;
     tty_w.flush().ok()?;
     let (mut rows, mut cols) = (0u32, 0u32);
-    if let Some(reply) = read_reply(&mut tty_r, Duration::from_millis(100)) {
-        if let Some((kind, r, c)) = parse_three_nums(&reply) {
-            if kind == 8 {
+    if let Some(reply) = read_reply(&mut tty_r, Duration::from_millis(100))
+        && let Some((kind, r, c)) = parse_three_nums(&reply)
+            && kind == 8 {
                 rows = r;
                 cols = c;
             }
-        }
-    }
 
     if win_h > 0 && win_w > 0 && rows > 0 && cols > 0 {
         let cell_w = (win_w as f32 / cols as f32).round() as u16;
@@ -216,14 +209,13 @@ fn parse_osc_rgb(reply: &str) -> Option<(u8, u8, u8)> {
         return Some((r, g, b));
     }
 
-    if let Some(hex) = payload.strip_prefix('#') {
-        if hex.len() >= 6 {
+    if let Some(hex) = payload.strip_prefix('#')
+        && hex.len() >= 6 {
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
             return Some((r, g, b));
         }
-    }
 
     None
 }
@@ -304,7 +296,7 @@ fn parse_colorfgbg_env() -> Option<(u8, u8, u8)> {
     let bg_part = raw
         .split(';')
         .filter(|segment| !segment.is_empty())
-        .last()?;
+        .next_back()?;
     if bg_part.eq_ignore_ascii_case("default") {
         return None;
     }
@@ -323,8 +315,7 @@ fn detect_macos_system_theme() -> Option<bool> {
         .arg("-e")
         .arg("tell application \"System Events\" to tell appearance preferences to get dark mode")
         .output()
-    {
-        if output.status.success() {
+        && output.status.success() {
             let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if out.eq_ignore_ascii_case("true") {
                 return Some(true);
@@ -333,17 +324,15 @@ fn detect_macos_system_theme() -> Option<bool> {
                 return Some(false);
             }
         }
-    }
 
     // Fallback to `defaults read -g AppleInterfaceStyle` - returns "Dark" when dark
-    if let Ok(output) = Command::new("defaults").arg("read").arg("-g").arg("AppleInterfaceStyle").output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("defaults").arg("read").arg("-g").arg("AppleInterfaceStyle").output()
+        && output.status.success() {
             let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if out.eq_ignore_ascii_case("Dark") {
                 return Some(true);
             }
         }
-    }
 
     None
 }
@@ -366,21 +355,19 @@ fn detect_dark_from_rgb(rgb: (u8, u8, u8)) -> bool {
 }
 
 pub fn detect_dark_terminal_background() -> Option<TerminalBackgroundDetection> {
-    if let Ok(value) = env::var("CODE_DISABLE_THEME_AUTODETECT") {
-        if matches!(value.as_str(), "1" | "true" | "TRUE" | "True") {
+    if let Ok(value) = env::var("CODE_DISABLE_THEME_AUTODETECT")
+        && matches!(value.as_str(), "1" | "true" | "TRUE" | "True") {
             return None;
         }
-    }
 
-    if osc_background_query_supported() {
-        if let Some(rgb) = query_osc_background_color() {
+    if osc_background_query_supported()
+        && let Some(rgb) = query_osc_background_color() {
             return Some(TerminalBackgroundDetection {
                 is_dark: detect_dark_from_rgb(rgb),
                 source: TerminalBackgroundSource::Osc11,
                 rgb: Some(rgb),
             });
         }
-    }
 
     if let Some(rgb) = parse_colorfgbg_env() {
         return Some(TerminalBackgroundDetection {

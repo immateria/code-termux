@@ -11,13 +11,12 @@ pub(super) fn rehydrate(chat: &mut ChatWidget<'_>) {
     let old_state = mem::take(&mut chat.tools_state);
     let mut new_state = super::ToolState::default();
     chat.history_debug(format!(
-        "running_tools.rehydrate.begin prev_custom={} prev_wait={} prev_kill={}",
-        prev_custom, prev_wait, prev_kill
+        "running_tools.rehydrate.begin prev_custom={prev_custom} prev_wait={prev_wait} prev_kill={prev_kill}"
     ));
 
     for (idx, cell) in chat.history_cells.iter().enumerate() {
         let Some(order_key) = chat.cell_order_seq.get(idx).copied() else {
-            chat.history_debug(format!("running_tools.rehydrate.skip idx={} reason=no_order", idx));
+            chat.history_debug(format!("running_tools.rehydrate.skip idx={idx} reason=no_order"));
             continue;
         };
 
@@ -30,7 +29,7 @@ pub(super) fn rehydrate(chat: &mut ChatWidget<'_>) {
 
         let state = running_cell.state();
         let Some(call_id) = state.call_id.as_ref().filter(|cid| !cid.is_empty()) else {
-            chat.history_debug(format!("running_tools.rehydrate.skip idx={} reason=no_call_id", idx));
+            chat.history_debug(format!("running_tools.rehydrate.skip idx={idx} reason=no_call_id"));
             continue;
         };
         let tool_key = ToolCallId(call_id.clone());
@@ -101,11 +100,10 @@ pub(super) fn resolve_entry_index(
     entry: &RunningToolEntry,
     call_id: &str,
 ) -> Option<usize> {
-    if let Some(id) = entry.history_id {
-        if let Some(idx) = chat.cell_index_for_history_id(id) {
+    if let Some(id) = entry.history_id
+        && let Some(idx) = chat.cell_index_for_history_id(id) {
             return Some(idx);
         }
-    }
     find_by_call_id(chat, call_id)
         .or_else(|| {
             chat
@@ -113,7 +111,7 @@ pub(super) fn resolve_entry_index(
                 .iter()
                 .position(|key| *key == entry.order_key)
         })
-        .or_else(|| {
+        .or({
             if entry.fallback_index < chat.history_cells.len() {
                 Some(entry.fallback_index)
             } else {
@@ -169,8 +167,7 @@ pub(super) fn finalize_all_due_to_answer(chat: &mut ChatWidget<'_>) {
 
         let Some(idx) = resolved_idx else {
             chat.history_debug(format!(
-                "running_tools.finalize_due_to_answer.pending call_id={}",
-                call_id
+                "running_tools.finalize_due_to_answer.pending call_id={call_id}"
             ));
             unresolved.insert(tool_id, entry);
             continue;
@@ -178,9 +175,7 @@ pub(super) fn finalize_all_due_to_answer(chat: &mut ChatWidget<'_>) {
 
         if idx >= chat.history_cells.len() {
             chat.history_debug(format!(
-                "running_tools.finalize_due_to_answer.pending call_id={} reason=idx_oob idx={}",
-                call_id,
-                idx
+                "running_tools.finalize_due_to_answer.pending call_id={call_id} reason=idx_oob idx={idx}"
             ));
             unresolved.insert(tool_id, entry);
             continue;
@@ -192,9 +187,7 @@ pub(super) fn finalize_all_due_to_answer(chat: &mut ChatWidget<'_>) {
             .is_none()
         {
             chat.history_debug(format!(
-                "running_tools.finalize_due_to_answer.pending call_id={} reason=cell_mismatch idx={}",
-                call_id,
-                idx
+                "running_tools.finalize_due_to_answer.pending call_id={call_id} reason=cell_mismatch idx={idx}"
             ));
             unresolved.insert(tool_id, entry);
             continue;
@@ -209,9 +202,7 @@ pub(super) fn finalize_all_due_to_answer(chat: &mut ChatWidget<'_>) {
         );
         chat.history_replace_at(idx, Box::new(completed));
         chat.history_debug(format!(
-            "running_tools.finalize_due_to_answer.finalized call_id={} idx={}",
-            call_id,
-            idx
+            "running_tools.finalize_due_to_answer.finalized call_id={call_id} idx={idx}"
         ));
         any_finalized = true;
     }

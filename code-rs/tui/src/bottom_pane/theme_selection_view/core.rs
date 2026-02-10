@@ -146,7 +146,7 @@ impl ThemeSelectionView {
     }
 
     pub(super) fn visible_theme_rows(list_height: u16) -> usize {
-        (list_height as usize).saturating_sub(1).min(9).max(1)
+        (list_height as usize).saturating_sub(1).clamp(1, 9)
     }
 
     pub(super) fn theme_mode_areas(body_area: Rect) -> (Rect, Rect) {
@@ -602,11 +602,10 @@ impl ThemeSelectionView {
             };
             if self.selected_theme_index < limit {
                 self.selected_theme_index += 1;
-                if self.selected_theme_index < options_len {
-                    if let Some(theme) = Self::theme_name_for_option_index(self.selected_theme_index)
-                    {
-                        self.current_theme = theme;
-                    }
+                if self.selected_theme_index < options_len
+                    && let Some(theme) = Self::theme_name_for_option_index(self.selected_theme_index)
+                {
+                    self.current_theme = theme;
                 }
             }
             self.send_theme_split_preview();
@@ -701,19 +700,19 @@ impl ThemeSelectionView {
                 Err(e) => {
                     tx.send_background_before_next_output_with_ticket(
                         &before_ticket,
-                        format!("Failed to start runtime: {}", e),
+                        format!("Failed to start runtime: {e}"),
                     );
                     return;
                 }
             };
-            let _ = rt.block_on(async move {
+            rt.block_on(async move {
                 // Load current config (CLI-style) and construct a one-off ModelClient
                 let cfg = match code_core::config::Config::load_with_cli_overrides(vec![], code_core::config::ConfigOverrides::default()) {
                     Ok(c) => c,
                     Err(e) => {
                         tx.send_background_before_next_output_with_ticket(
                             &before_ticket,
-                            format!("Config error: {}", e),
+                            format!("Config error: {e}"),
                         );
                         return;
                     }
@@ -730,6 +729,24 @@ impl ThemeSelectionView {
                     preferred_auth,
                     cfg.responses_originator_header.clone(),
                 );
+                let debug_logger = match code_core::debug_logger::DebugLogger::new(true) {
+                    Ok(logger) => logger,
+                    Err(err) => {
+                        tracing::warn!("spinner debug logger init failed: {err}");
+                        match code_core::debug_logger::DebugLogger::new(false) {
+                            Ok(logger) => logger,
+                            Err(disabled_err) => {
+                                tx.send_background_before_next_output_with_ticket(
+                                    &before_ticket,
+                                    format!(
+                                        "Failed to initialize debug logger: {err}; fallback failed: {disabled_err}"
+                                    ),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                };
                 let client = code_core::ModelClient::new(
                     std::sync::Arc::new(cfg.clone()),
                     Some(auth_mgr),
@@ -740,14 +757,27 @@ impl ThemeSelectionView {
                     cfg.model_text_verbosity,
                     uuid::Uuid::new_v4(),
                     // Enable debug logs for targeted triage of stream issues
-                    std::sync::Arc::new(std::sync::Mutex::new(code_core::debug_logger::DebugLogger::new(true).unwrap_or_else(|_| code_core::debug_logger::DebugLogger::new(false).expect("debug logger")))),
+                    std::sync::Arc::new(std::sync::Mutex::new(debug_logger)),
                 );
 
                 // Build developer guidance and input
                 let developer = "You are performing a custom task to create a terminal spinner.\n\nRequirements:\n- Output JSON ONLY, no prose.\n- `interval` is the delay in milliseconds between frames; MUST be between 50 and 300 inclusive.\n- `frames` is an array of strings; each element is a frame displayed sequentially at the given interval.\n- The spinner SHOULD have between 2 and 60 frames.\n- Each frame SHOULD be between 1 and 30 characters wide. ALL frames MUST be the SAME width (same number of characters). If you propose frames with varying widths, PAD THEM ON THE LEFT with spaces so they are uniform.\n- You MAY use both ASCII and Unicode characters (e.g., box drawing, braille, arrows). Use EMOJIS ONLY if the user explicitly requests emojis in their prompt.\n- Be creative! You have the full range of Unicode to play with!\n".to_string();
-                let mut input: Vec<code_protocol::models::ResponseItem> = Vec::new();
-                input.push(code_protocol::models::ResponseItem::Message { id: None, role: "developer".to_string(), content: vec![code_protocol::models::ContentItem::InputText { text: developer }] });
-                input.push(code_protocol::models::ResponseItem::Message { id: None, role: "user".to_string(), content: vec![code_protocol::models::ContentItem::InputText { text: user_prompt }] });
+                let input: Vec<code_protocol::models::ResponseItem> = vec![
+                    code_protocol::models::ResponseItem::Message {
+                        id: None,
+                        role: "developer".to_string(),
+                        content: vec![code_protocol::models::ContentItem::InputText {
+                            text: developer,
+                        }],
+                    },
+                    code_protocol::models::ResponseItem::Message {
+                        id: None,
+                        role: "user".to_string(),
+                        content: vec![code_protocol::models::ContentItem::InputText {
+                            text: user_prompt,
+                        }],
+                    },
+                ];
 
                 // JSON schema for structured output
                 let schema = serde_json::json!({
@@ -782,9 +812,9 @@ impl ThemeSelectionView {
                     Err(e) => {
                         tx.send_background_before_next_output_with_ticket(
                             &before_ticket,
-                            format!("Request error: {}", e),
+                            format!("Request error: {e}"),
                         );
-                        tracing::info!("spinner request error: {}", e);
+                        tracing::info!("spinner request error: {e}");
                         return;
                     }
                 };
@@ -806,8 +836,8 @@ impl ThemeSelectionView {
                         }
                         Ok(code_core::ResponseEvent::Completed { .. }) => { tracing::info!("LLM: completed"); break; }
                         Err(e) => {
-                            let msg = format!("{}", e);
-                            tracing::info!("LLM stream error: {}", msg);
+                            let msg = e.to_string();
+                            tracing::info!("LLM stream error: {msg}");
                             last_err = Some(msg);
                             break; // Stop consuming after a terminal transport error
                         }
@@ -867,7 +897,7 @@ impl ThemeSelectionView {
                                 Ok(v) => v,
                                 Err(e2) => {
                                     let _ = progress_tx.send(ProgressMsg::CompletedErr {
-                                        error: format!("{}", e2),
+                                        error: e2.to_string(),
                                         _raw_snippet: out.chars().take(200).collect::<String>(),
                                     });
                                     return;
@@ -876,8 +906,8 @@ impl ThemeSelectionView {
                         } else {
                             // Prefer a clearer message if we saw a transport error
                             let msg = last_err
-                                .map(|le| format!("model stream error: {}", le))
-                                .unwrap_or_else(|| format!("{}", e));
+                                .map(|le| format!("model stream error: {le}"))
+                                .unwrap_or_else(|| e.to_string());
                             let _ = progress_tx.send(ProgressMsg::CompletedErr {
                                 error: msg,
                                 _raw_snippet: out.chars().take(200).collect::<String>(),
@@ -886,18 +916,27 @@ impl ThemeSelectionView {
                         }
                     }
                 };
-                let interval = v.get("interval").and_then(|x| x.as_u64()).unwrap_or(120).clamp(50, 300);
+                let interval = v
+                    .get("interval")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(120)
+                    .clamp(50, 300);
                 let display_name = v
                     .get("name")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.trim())
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .unwrap_or("Custom")
                     .to_string();
                 let mut frames: Vec<String> = v
                     .get("frames")
-                    .and_then(|x| x.as_array())
-                    .map(|arr| arr.iter().filter_map(|f| f.as_str().map(|s| s.to_string())).collect())
+                    .and_then(serde_json::Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 // Enforce frame width limit (truncate to first 20 characters)
@@ -936,7 +975,6 @@ impl ThemeSelectionView {
                 &fallback_ticket,
                 "Failed to generate spinner preview: background worker unavailable".to_string(),
             );
-            return;
         }
     }
 
@@ -951,7 +989,7 @@ impl ThemeSelectionView {
         fn color_to_hex(c: ratatui::style::Color) -> Option<String> {
             match c {
                 ratatui::style::Color::Rgb(r, g, b) => {
-                    Some(format!("#{:02X}{:02X}{:02X}", r, g, b))
+                    Some(format!("#{r:02X}{g:02X}{b:02X}"))
                 }
                 _ => None,
             }
@@ -1035,18 +1073,18 @@ impl ThemeSelectionView {
                 Err(e) => {
                     tx.send_background_before_next_output_with_ticket(
                         &before_ticket,
-                        format!("Failed to start runtime: {}", e),
+                        format!("Failed to start runtime: {e}"),
                     );
                     return;
                 }
             };
-            let _ = rt.block_on(async move {
+            rt.block_on(async move {
                 let cfg = match code_core::config::Config::load_with_cli_overrides(vec![], code_core::config::ConfigOverrides::default()) {
                     Ok(c) => c,
                     Err(e) => {
                         tx.send_background_before_next_output_with_ticket(
                             &before_ticket,
-                            format!("Config error: {}", e),
+                            format!("Config error: {e}"),
                         );
                         return;
                     }
@@ -1056,6 +1094,24 @@ impl ThemeSelectionView {
                     code_protocol::mcp_protocol::AuthMode::ApiKey,
                     cfg.responses_originator_header.clone(),
                 );
+                let debug_logger = match code_core::debug_logger::DebugLogger::new(false) {
+                    Ok(logger) => logger,
+                    Err(err) => {
+                        tracing::warn!("theme debug logger init failed: {err}");
+                        match code_core::debug_logger::DebugLogger::new(false) {
+                            Ok(logger) => logger,
+                            Err(disabled_err) => {
+                                tx.send_background_before_next_output_with_ticket(
+                                    &before_ticket,
+                                    format!(
+                                        "Failed to initialize debug logger: {err}; fallback failed: {disabled_err}"
+                                    ),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                };
                 let client = code_core::ModelClient::new(
                     std::sync::Arc::new(cfg.clone()),
                     Some(auth_mgr),
@@ -1065,17 +1121,29 @@ impl ThemeSelectionView {
                     cfg.model_reasoning_summary,
                     cfg.model_text_verbosity,
                     uuid::Uuid::new_v4(),
-                    std::sync::Arc::new(std::sync::Mutex::new(code_core::debug_logger::DebugLogger::new(false).unwrap_or_else(|_| code_core::debug_logger::DebugLogger::new(false).expect("debug logger")))),
+                    std::sync::Arc::new(std::sync::Mutex::new(debug_logger)),
                 );
 
                 // Prompt with example and detailed field usage to help the model choose appropriate colors
                 let developer = format!(
-                    "You are designing a TUI color theme for a terminal UI.\n\nOutput: Strict JSON only. Include fields: `name` (string), `is_dark` (boolean), and `colors` (object of hex strings #RRGGBB).\n\nImportant rules:\n- Include EVERY `colors` key below. If you are not changing a value, copy it from the Current example.\n- Ensure strong contrast and readability for text vs background and for dim/bright variants.\n- Favor accessible color contrast (WCAG-ish) where possible.\n\nColor semantics (how the UI uses them):\n- background: main screen background.\n- foreground: primary foreground accents for widgets.\n- text: normal body text; must be readable on background.\n- text_dim: secondary/description text; slightly lower contrast than text.\n- text_bright: headings/emphasis; higher contrast than text.\n- primary: primary action/highlight color for selected items/buttons.\n- secondary: secondary accents (less prominent than primary).\n- border: container borders/dividers; should be visible but subtle against background.\n- border_focused: border when focused/active; slightly stronger than border.\n- selection: background for selected list rows; must contrast with text.\n- cursor: text caret color in input fields; must contrast with background.\n- success/warning/error/info: status badges and notices.\n- keyword/string/comment/function: syntax highlight accents in code blocks.\n- spinner: glyph color for loading animations; should be visible on background.\n- progress: progress-bar foreground color.\n\nCurrent theme example (copy unchanged values from here):\n{}",
-                    example.to_string()
+                    "You are designing a TUI color theme for a terminal UI.\n\nOutput: Strict JSON only. Include fields: `name` (string), `is_dark` (boolean), and `colors` (object of hex strings #RRGGBB).\n\nImportant rules:\n- Include EVERY `colors` key below. If you are not changing a value, copy it from the Current example.\n- Ensure strong contrast and readability for text vs background and for dim/bright variants.\n- Favor accessible color contrast (WCAG-ish) where possible.\n\nColor semantics (how the UI uses them):\n- background: main screen background.\n- foreground: primary foreground accents for widgets.\n- text: normal body text; must be readable on background.\n- text_dim: secondary/description text; slightly lower contrast than text.\n- text_bright: headings/emphasis; higher contrast than text.\n- primary: primary action/highlight color for selected items/buttons.\n- secondary: secondary accents (less prominent than primary).\n- border: container borders/dividers; should be visible but subtle against background.\n- border_focused: border when focused/active; slightly stronger than border.\n- selection: background for selected list rows; must contrast with text.\n- cursor: text caret color in input fields; must contrast with background.\n- success/warning/error/info: status badges and notices.\n- keyword/string/comment/function: syntax highlight accents in code blocks.\n- spinner: glyph color for loading animations; should be visible on background.\n- progress: progress-bar foreground color.\n\nCurrent theme example (copy unchanged values from here):\n{example}",
                 );
-                let mut input: Vec<code_protocol::models::ResponseItem> = Vec::new();
-                input.push(code_protocol::models::ResponseItem::Message { id: None, role: "developer".to_string(), content: vec![code_protocol::models::ContentItem::InputText { text: developer }] });
-                input.push(code_protocol::models::ResponseItem::Message { id: None, role: "user".to_string(), content: vec![code_protocol::models::ContentItem::InputText { text: user_prompt }] });
+                let input: Vec<code_protocol::models::ResponseItem> = vec![
+                    code_protocol::models::ResponseItem::Message {
+                        id: None,
+                        role: "developer".to_string(),
+                        content: vec![code_protocol::models::ContentItem::InputText {
+                            text: developer,
+                        }],
+                    },
+                    code_protocol::models::ResponseItem::Message {
+                        id: None,
+                        role: "user".to_string(),
+                        content: vec![code_protocol::models::ContentItem::InputText {
+                            text: user_prompt,
+                        }],
+                    },
+                ];
 
                 let schema = serde_json::json!({
                     "type": "object",
@@ -1134,7 +1202,7 @@ impl ThemeSelectionView {
                     Err(e) => {
                         tx.send_background_before_next_output_with_ticket(
                             &before_ticket,
-                            format!("Request error: {}", e),
+                            format!("Request error: {e}"),
                         );
                         return;
                     }
@@ -1157,19 +1225,25 @@ impl ThemeSelectionView {
                             let _ = progress_tx.send(ProgressMsg::OutputDelta(delta.clone()));
                             out.push_str(&delta);
                         }
-                        Ok(code_core::ResponseEvent::OutputItemDone { item, .. }) => {
-                            if let code_protocol::models::ResponseItem::Message { content, .. } = item {
-                                for c in content {
-                                    if let code_protocol::models::ContentItem::OutputText { text } = c {
-                                        out.push_str(&text);
-                                    }
+                        Ok(code_core::ResponseEvent::OutputItemDone {
+                            item: code_protocol::models::ResponseItem::Message { content, .. },
+                            ..
+                        }) => {
+                            for c in content {
+                                if let code_protocol::models::ContentItem::OutputText {
+                                    text,
+                                } = c
+                                {
+                                    out.push_str(&text);
                                 }
                             }
                         }
                         Ok(code_core::ResponseEvent::Completed { .. }) => break,
                         Err(e) => {
-                            let msg = format!("{}", e);
-                            let _ = progress_tx.send(ProgressMsg::ThinkingDelta(format!("(stream error: {})", msg)));
+                            let msg = e.to_string();
+                            let _ = progress_tx.send(ProgressMsg::ThinkingDelta(format!(
+                                "(stream error: {msg})"
+                            )));
                             last_err = Some(msg);
                             break; // Stop consuming after a terminal transport error
                         }
@@ -1181,7 +1255,7 @@ impl ThemeSelectionView {
                 // If we received no content at all, surface the transport error explicitly
                 if out.trim().is_empty() {
                     let err = last_err
-                        .map(|e| format!("model stream error: {}", e))
+                        .map(|e| format!("model stream error: {e}"))
                         .unwrap_or_else(|| "model stream returned no content".to_string());
                     let _ = progress_tx.send(ProgressMsg::CompletedErr {
                         error: err,
@@ -1220,7 +1294,7 @@ impl ThemeSelectionView {
                                 Ok(v) => v,
                                 Err(e2) => {
                                     let _ = progress_tx.send(ProgressMsg::CompletedErr {
-                                        error: format!("{}", e2),
+                                        error: e2.to_string(),
                                         _raw_snippet: out.chars().take(200).collect(),
                                     });
                                     return;
@@ -1229,8 +1303,8 @@ impl ThemeSelectionView {
                         } else {
                             // Prefer a clearer message if we saw a transport error
                             let msg = last_err
-                                .map(|le| format!("model stream error: {}", le))
-                                .unwrap_or_else(|| format!("{}", e));
+                                .map(|le| format!("model stream error: {le}"))
+                                .unwrap_or_else(|| e.to_string());
                             let _ = progress_tx.send(ProgressMsg::CompletedErr {
                                 error: msg,
                                 _raw_snippet: out.chars().take(200).collect(),
@@ -1240,10 +1314,15 @@ impl ThemeSelectionView {
                     }
                 };
                 let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("Custom").trim().to_string();
-                let is_dark = v.get("is_dark").and_then(|x| x.as_bool());
+                let is_dark = v.get("is_dark").and_then(serde_json::Value::as_bool);
                 let mut colors = code_core::config_types::ThemeColors::default();
                 if let Some(map) = v.get("colors").and_then(|x| x.as_object()) {
-                    let get = |k: &str| map.get(k).and_then(|x| x.as_str()).map(|s| s.trim().to_string());
+                    let get = |k: &str| {
+                        map.get(k)
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::trim)
+                            .map(str::to_string)
+                    };
                     colors.primary = get("primary");
                     colors.secondary = get("secondary");
                     colors.background = get("background");
@@ -1279,7 +1358,6 @@ impl ThemeSelectionView {
                 &fallback_ticket,
                 "Failed to generate theme: background worker unavailable".to_string(),
             );
-            return;
         }
     }
 }

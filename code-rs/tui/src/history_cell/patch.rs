@@ -212,7 +212,9 @@ impl PatchSummaryCell {
         }
 
         std::cell::Ref::map(self.cached_layout.borrow(), |cache| {
-            cache.as_ref().expect("patch layout cache missing")
+            cache
+                .as_ref()
+                .unwrap_or_else(|| unreachable!("patch layout cache missing"))
         })
     }
 
@@ -230,8 +232,8 @@ impl PatchSummaryCell {
         if matches!(
             self.record.patch_type,
             HistoryPatchEventType::ApplyFailure
-        ) {
-            if let Some(metadata) = &self.record.failure {
+        )
+            && let Some(metadata) = &self.record.failure {
                 if !lines.is_empty() {
                     lines.push(Line::default());
                 }
@@ -243,26 +245,23 @@ impl PatchSummaryCell {
                 if !metadata.message.is_empty() {
                     lines.push(Line::from(metadata.message.clone()).fg(crate::colors::error()));
                 }
-                if let Some(stdout) = &metadata.stdout_excerpt {
-                    if !stdout.is_empty() {
+                if let Some(stdout) = &metadata.stdout_excerpt
+                    && !stdout.is_empty() {
                         lines.push(Line::default());
                         lines.push(Line::from("stdout excerpt:").fg(crate::colors::info()));
                         for line in stdout.lines() {
                             lines.push(Line::from(line.to_string()).fg(crate::colors::text()));
                         }
                     }
-                }
-                if let Some(stderr) = &metadata.stderr_excerpt {
-                    if !stderr.is_empty() {
+                if let Some(stderr) = &metadata.stderr_excerpt
+                    && !stderr.is_empty() {
                         lines.push(Line::default());
                         lines.push(Line::from("stderr excerpt:").fg(crate::colors::error()));
                         for line in stderr.lines() {
                             lines.push(Line::from(line.to_string()).fg(crate::colors::error()));
                         }
                     }
-                }
             }
-        }
         lines
     }
 }

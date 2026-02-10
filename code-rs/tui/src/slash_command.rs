@@ -18,11 +18,10 @@ fn demo_command_enabled() -> bool {
             normalized == "perf" || normalized.starts_with("dev")
         };
 
-        if let Some(profile) = BUILD_PROFILE.or(option_env!("PROFILE")) {
-            if profile_matches(profile) {
+        if let Some(profile) = BUILD_PROFILE.or(option_env!("PROFILE"))
+            && profile_matches(profile) {
                 return true;
             }
-        }
 
         if let Ok(exe_path) = std::env::current_exe() {
             let path = exe_path.to_string_lossy().to_ascii_lowercase();
@@ -161,8 +160,8 @@ impl SlashCommand {
         )
     }
 
-    pub fn settings_section_from_args<'a>(&self, args: &'a str) -> Option<&'a str> {
-        if *self != SlashCommand::Settings {
+    pub fn settings_section_from_args(self, args: &str) -> Option<&str> {
+        if self != SlashCommand::Settings {
             return None;
         }
         let section = args.split_whitespace().next().unwrap_or("");
@@ -234,7 +233,7 @@ pub fn process_slash_command_message(message: &str) -> ProcessedCommand {
     let command_portion = if has_slash { &trimmed[1..] } else { trimmed };
     let mut parts = command_portion.splitn(2, |c: char| c.is_whitespace());
     let command_str = parts.next().unwrap_or("");
-    let args_raw = parts.next().map(|s| s.trim()).unwrap_or("");
+    let args_raw = parts.next().map(str::trim).unwrap_or("");
     let canonical_command = command_str.to_ascii_lowercase();
 
     if matches!(canonical_command.as_str(), "quit" | "exit") {

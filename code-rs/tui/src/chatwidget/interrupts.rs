@@ -63,7 +63,7 @@ impl InterruptManager {
 
     pub(crate) fn flush_all(&mut self, chat: &mut ChatWidget<'_>) {
         // Ensure stable order
-        self.queue.sort_by(|a, b| seq_of(a).cmp(&seq_of(b)));
+        self.queue.sort_by_key(seq_of);
         for q in self.queue.drain(..) {
             match q {
                 QueuedInterrupt::ExecApproval { id, ev, .. } => chat.handle_exec_approval_now(id, ev),

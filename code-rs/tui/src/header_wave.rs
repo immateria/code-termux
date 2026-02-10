@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use std::cell::Cell;
 use std::f32::consts::TAU;
 use std::time::{Duration, Instant};

@@ -90,17 +90,22 @@ async fn run_llm_request(
     let config = Config::load_with_cli_overrides(overrides_vec, overrides)?;
 
     // Build Prompt with custom developer + user messages, no extra tools
-    let mut input: Vec<ResponseItem> = Vec::new();
-    input.push(ResponseItem::Message {
-        id: None,
-        role: "developer".to_string(),
-        content: vec![ContentItem::InputText { text: args.developer.clone() }],
-    });
-    input.push(ResponseItem::Message {
-        id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText { text: args.message.clone() }],
-    });
+    let input: Vec<ResponseItem> = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: args.developer.clone(),
+            }],
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: args.message.clone(),
+            }],
+        },
+    ];
 
     // Resolve schema
     let schema_val: Option<serde_json::Value> = if let Some(s) = &args.schema_json {
@@ -159,12 +164,13 @@ async fn run_llm_request(
         match ev {
             code_core::ResponseEvent::ReasoningSummaryDelta { delta, .. } => { tracing::info!(target: "llm", "thinking: {}", delta); }
             code_core::ResponseEvent::ReasoningContentDelta { delta, .. } => { tracing::info!(target: "llm", "reasoning: {}", delta); }
-            code_core::ResponseEvent::OutputItemDone { item, .. } => {
-                if let ResponseItem::Message { content, .. } = item {
-                    for c in content {
-                        if let ContentItem::OutputText { text } = c {
-                            final_text.push_str(&text);
-                        }
+            code_core::ResponseEvent::OutputItemDone {
+                item: ResponseItem::Message { content, .. },
+                ..
+            } => {
+                for c in content {
+                    if let ContentItem::OutputText { text } = c {
+                        final_text.push_str(&text);
                     }
                 }
             }
@@ -178,6 +184,6 @@ async fn run_llm_request(
         }
     }
 
-    println!("{}", final_text);
+    println!("{final_text}");
     Ok(())
 }

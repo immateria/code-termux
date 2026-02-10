@@ -291,14 +291,14 @@ fn build_hourly_window_line(
         ]);
     }
 
-    if let Some(next) = next_reset {
-        if let Some(timing) = compute_window_timing(metrics.primary_window_minutes, next) {
+    if let Some(next) = next_reset
+        && let Some(timing) = compute_window_timing(metrics.primary_window_minutes, next) {
             let window_secs = timing.window.as_secs_f64();
             if window_secs > 0.0 {
                 let elapsed = timing.elapsed();
                 let percent = ((elapsed.as_secs_f64() / window_secs) * 100.0).clamp(0.0, 100.0);
                 let mut spans: Vec<Span<'static>> = Vec::new();
-                spans.push(Span::raw(prefix.clone()));
+                spans.push(Span::raw(prefix));
                 spans.extend(render_percent_bar(percent));
                 spans.push(Span::styled(
                     format!(" {}", format_percent(percent)),
@@ -314,7 +314,6 @@ fn build_hourly_window_line(
                 return Line::from(spans);
             }
         }
-    }
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::raw(prefix));
@@ -337,7 +336,7 @@ fn build_hourly_reset_line(
         if let Some(timing) = compute_window_timing(window_minutes, next) {
             let remaining = format_duration(timing.remaining);
             let mut spans: Vec<Span<'static>> = Vec::new();
-            spans.push(Span::raw(prefix.clone()));
+            spans.push(Span::raw(prefix));
             let time_display = format_reset_timestamp(timing.next_reset_local, false);
             spans.push(Span::raw("at "));
             spans.push(Span::raw(time_display));
@@ -379,14 +378,14 @@ fn build_weekly_window_line(
         ]);
     }
 
-    if let Some(next) = next_reset {
-        if let Some(timing) = compute_window_timing(weekly_minutes, next) {
+    if let Some(next) = next_reset
+        && let Some(timing) = compute_window_timing(weekly_minutes, next) {
             let window_secs = timing.window.as_secs_f64();
             if window_secs > 0.0 {
                 let elapsed = timing.elapsed();
                 let percent = ((elapsed.as_secs_f64() / window_secs) * 100.0).clamp(0.0, 100.0);
                 let mut spans: Vec<Span<'static>> = Vec::new();
-                spans.push(Span::raw(prefix.clone()));
+                spans.push(Span::raw(prefix));
                 spans.extend(render_percent_bar(percent));
                 spans.push(Span::styled(
                     format!(" {}", format_percent(percent)),
@@ -401,7 +400,6 @@ fn build_weekly_window_line(
                 return Line::from(spans);
             }
         }
-    }
 
     Line::from(vec![
         Span::raw(prefix),
@@ -424,7 +422,7 @@ fn build_weekly_reset_line(
         if let Some(timing) = compute_window_timing(window_minutes, next) {
             let remaining = format_duration(timing.remaining);
             let mut spans: Vec<Span<'static>> = Vec::new();
-            spans.push(Span::raw(prefix.clone()));
+            spans.push(Span::raw(prefix));
             let detailed_display = format_reset_timestamp(timing.next_reset_local, true);
             spans.push(Span::raw(detailed_display));
             spans.push(Span::styled(
@@ -689,7 +687,7 @@ fn format_reset_timestamp(ts: chrono::DateTime<Local>, include_calendar: bool) -
 
 fn format_day_ordinal(day: u32) -> String {
     let suffix = match day % 100 {
-        11 | 12 | 13 => "th",
+        11..=13 => "th",
         _ => match day % 10 {
             1 => "st",
             2 => "nd",

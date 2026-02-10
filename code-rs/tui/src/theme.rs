@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use code_core::config_types::ThemeColors;
 use code_core::config_types::ThemeConfig;
 use code_core::config_types::ThemeName;
@@ -5,7 +7,10 @@ use lazy_static::lazy_static;
 use ratatui::style::Color;
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::sync::LockResult;
 use std::sync::RwLock;
+use std::sync::RwLockReadGuard;
+use std::sync::RwLockWriteGuard;
 
 lazy_static! {
     static ref CURRENT_THEME: RwLock<Theme> = RwLock::new(Theme::default());
@@ -13,6 +18,18 @@ lazy_static! {
     static ref CUSTOM_THEME_LABEL: RwLock<Option<String>> = RwLock::new(None);
     static ref CUSTOM_THEME_COLORS: RwLock<Option<code_core::config_types::ThemeColors>> = RwLock::new(None);
     static ref CUSTOM_THEME_IS_DARK: RwLock<Option<bool>> = RwLock::new(None);
+}
+
+fn unwrap_lock<T>(result: LockResult<T>) -> T {
+    result.unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn read_lock<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    unwrap_lock(lock.read())
+}
+
+fn write_lock<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    unwrap_lock(lock.write())
 }
 
 /// Represents a complete theme with all colors resolved
@@ -76,56 +93,56 @@ pub fn init_theme(config: &ThemeConfig) {
         quantize_theme_to_ansi256(&mut theme);
     }
 
-    let mut current = CURRENT_THEME.write().unwrap();
+    let mut current = write_lock(&CURRENT_THEME);
     *current = theme.clone();
-    *CURRENT_THEME_NAME.write().unwrap() = mapped_name;
+    *write_lock(&CURRENT_THEME_NAME) = mapped_name;
     // Track custom theme label for UI display
     if matches!(config.name, ThemeName::Custom) {
-        *CUSTOM_THEME_LABEL.write().unwrap() = config.label.clone();
-        *CUSTOM_THEME_COLORS.write().unwrap() = Some(config.colors.clone());
-        *CUSTOM_THEME_IS_DARK.write().unwrap() = config.is_dark;
+        *write_lock(&CUSTOM_THEME_LABEL) = config.label.clone();
+        *write_lock(&CUSTOM_THEME_COLORS) = Some(config.colors.clone());
+        *write_lock(&CUSTOM_THEME_IS_DARK) = config.is_dark;
     }
 }
 
 /// Get the current theme
 pub fn current_theme() -> Theme {
-    CURRENT_THEME.read().unwrap().clone()
+    read_lock(&CURRENT_THEME).clone()
 }
 
 #[allow(dead_code)]
 pub(crate) fn current_theme_name() -> ThemeName {
-    *CURRENT_THEME_NAME.read().unwrap()
+    *read_lock(&CURRENT_THEME_NAME)
 }
 
 /// Get the custom theme's display label, if any
 pub fn custom_theme_label() -> Option<String> {
-    CUSTOM_THEME_LABEL.read().unwrap().clone()
+    read_lock(&CUSTOM_THEME_LABEL).clone()
 }
 
 /// Set/update the custom theme's label at runtime
 #[allow(dead_code)]
 pub fn set_custom_theme_label(label: String) {
-    *CUSTOM_THEME_LABEL.write().unwrap() = Some(label);
+    *write_lock(&CUSTOM_THEME_LABEL) = Some(label);
 }
 
 /// Set/update the custom theme's colors at runtime
 #[allow(dead_code)]
 pub fn set_custom_theme_colors(colors: code_core::config_types::ThemeColors) {
-    *CUSTOM_THEME_COLORS.write().unwrap() = Some(colors);
+    *write_lock(&CUSTOM_THEME_COLORS) = Some(colors);
 }
 
 /// Return the custom theme colors, if known in this session
 pub fn custom_theme_colors() -> Option<code_core::config_types::ThemeColors> {
-    CUSTOM_THEME_COLORS.read().unwrap().clone()
+    read_lock(&CUSTOM_THEME_COLORS).clone()
 }
 
 #[allow(dead_code)]
 pub fn set_custom_theme_is_dark(is_dark: Option<bool>) {
-    *CUSTOM_THEME_IS_DARK.write().unwrap() = is_dark;
+    *write_lock(&CUSTOM_THEME_IS_DARK) = is_dark;
 }
 
 pub fn custom_theme_is_dark() -> Option<bool> {
-    CUSTOM_THEME_IS_DARK.read().unwrap().clone()
+    *read_lock(&CUSTOM_THEME_IS_DARK)
 }
 
 /// Switch to a different predefined theme
@@ -135,9 +152,9 @@ pub fn switch_theme(theme_name: ThemeName) {
     if needs_ansi256_fallback() {
         quantize_theme_to_ansi256(&mut theme);
     }
-    let mut current = CURRENT_THEME.write().unwrap();
+    let mut current = write_lock(&CURRENT_THEME);
     *current = theme.clone();
-    *CURRENT_THEME_NAME.write().unwrap() = mapped_name;
+    *write_lock(&CURRENT_THEME_NAME) = mapped_name;
 }
 
 /// Resolve a theme as it would appear in this terminal, without mutating global state.
@@ -161,17 +178,15 @@ pub(crate) fn resolved_theme(theme_name: ThemeName) -> Theme {
 
 /// Parse a color string (hex or named color)
 fn parse_color(color_str: &str) -> Option<Color> {
-    if let Some(hex) = color_str.strip_prefix('#') {
-        if hex.len() == 6 {
-            if let (Ok(r), Ok(g), Ok(b)) = (
+    if let Some(hex) = color_str.strip_prefix('#')
+        && hex.len() == 6
+            && let (Ok(r), Ok(g), Ok(b)) = (
                 u8::from_str_radix(&hex[0..2], 16),
                 u8::from_str_radix(&hex[2..4], 16),
                 u8::from_str_radix(&hex[4..6], 16),
             ) {
                 return Some(Color::Rgb(r, g, b));
             }
-        }
-    }
 
     // Named colors
     match color_str.to_lowercase().as_str() {
@@ -197,111 +212,90 @@ fn parse_color(color_str: &str) -> Option<Color> {
 
 /// Apply custom color overrides to a theme
 fn apply_custom_colors(theme: &mut Theme, colors: &ThemeColors) {
-    if let Some(ref c) = colors.primary {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.primary
+        && let Some(color) = parse_color(c) {
             theme.primary = color;
         }
-    }
-    if let Some(ref c) = colors.secondary {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.secondary
+        && let Some(color) = parse_color(c) {
             theme.secondary = color;
         }
-    }
-    if let Some(ref c) = colors.background {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.background
+        && let Some(color) = parse_color(c) {
             theme.background = color;
         }
-    }
-    if let Some(ref c) = colors.foreground {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.foreground
+        && let Some(color) = parse_color(c) {
             theme.foreground = color;
         }
-    }
-    if let Some(ref c) = colors.border {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.border
+        && let Some(color) = parse_color(c) {
             theme.border = color;
         }
-    }
-    if let Some(ref c) = colors.border_focused {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.border_focused
+        && let Some(color) = parse_color(c) {
             theme.border_focused = color;
         }
-    }
-    if let Some(ref c) = colors.selection {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.selection
+        && let Some(color) = parse_color(c) {
             theme.selection = color;
         }
-    }
-    if let Some(ref c) = colors.cursor {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.cursor
+        && let Some(color) = parse_color(c) {
             theme.cursor = color;
         }
-    }
-    if let Some(ref c) = colors.success {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.success
+        && let Some(color) = parse_color(c) {
             theme.success = color;
         }
-    }
-    if let Some(ref c) = colors.warning {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.warning
+        && let Some(color) = parse_color(c) {
             theme.warning = color;
         }
-    }
-    if let Some(ref c) = colors.error {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.error
+        && let Some(color) = parse_color(c) {
             theme.error = color;
         }
-    }
-    if let Some(ref c) = colors.info {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.info
+        && let Some(color) = parse_color(c) {
             theme.info = color;
         }
-    }
-    if let Some(ref c) = colors.text {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.text
+        && let Some(color) = parse_color(c) {
             theme.text = color;
         }
-    }
-    if let Some(ref c) = colors.text_dim {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.text_dim
+        && let Some(color) = parse_color(c) {
             theme.text_dim = color;
         }
-    }
-    if let Some(ref c) = colors.text_bright {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.text_bright
+        && let Some(color) = parse_color(c) {
             theme.text_bright = color;
         }
-    }
-    if let Some(ref c) = colors.keyword {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.keyword
+        && let Some(color) = parse_color(c) {
             theme.keyword = color;
         }
-    }
-    if let Some(ref c) = colors.string {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.string
+        && let Some(color) = parse_color(c) {
             theme.string = color;
         }
-    }
-    if let Some(ref c) = colors.comment {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.comment
+        && let Some(color) = parse_color(c) {
             theme.comment = color;
         }
-    }
-    if let Some(ref c) = colors.function {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.function
+        && let Some(color) = parse_color(c) {
             theme.function = color;
         }
-    }
-    if let Some(ref c) = colors.spinner {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.spinner
+        && let Some(color) = parse_color(c) {
             theme.spinner = color;
         }
-    }
-    if let Some(ref c) = colors.progress {
-        if let Some(color) = parse_color(c) {
+    if let Some(ref c) = colors.progress
+        && let Some(color) = parse_color(c) {
             theme.progress = color;
         }
-    }
 }
 
 /// Return true when we should prefer ANSI-256 over truecolor for safety.
@@ -383,11 +377,10 @@ const ANSI16_COLORS: [(u8, u8, u8); 16] = [
 ];
 
 pub(crate) fn palette_mode() -> PaletteMode {
-    if let Some(level) = supports_color::on_cached(supports_color::Stream::Stdout) {
-        if level.has_16m {
+    if let Some(level) = supports_color::on_cached(supports_color::Stream::Stdout)
+        && level.has_16m {
             return PaletteMode::Ansi256;
         }
-    }
     PaletteMode::Ansi16
 }
 
@@ -414,7 +407,7 @@ pub(crate) fn map_theme_for_palette(
             ThemeName::LightPhotonAnsi16 | ThemeName::DarkCarbonAnsi16 => name,
             ThemeName::Custom => {
                 let is_dark = custom_is_dark_hint
-                    .or_else(|| custom_theme_is_dark())
+                    .or_else(custom_theme_is_dark)
                     .unwrap_or(false);
                 if is_dark {
                     ThemeName::DarkCarbonAnsi16
@@ -446,11 +439,10 @@ fn quantize_theme_to_ansi256(theme: &mut Theme) {
     // macOS Terminal.app where bright white can appear gray.
     fn preserve_true_white(c: Color, for_background: bool) -> Option<Color> {
         if !for_background { return None; }
-        if let Color::Rgb(r, g, b) = c {
-            if r >= 245 && g >= 245 && b >= 245 {
+        if let Color::Rgb(r, g, b) = c
+            && r >= 245 && g >= 245 && b >= 245 {
                 return Some(Color::Indexed(15));
             }
-        }
         None
     }
 
@@ -603,9 +595,9 @@ fn rgb_to_ansi256_index(r: u8, g: u8, b: u8) -> u8 {
     };
 
     let mut seen_cube_indices: HashSet<u8> = HashSet::new();
-    for rr in neighbor_steps(ri as usize) {
-        for gg in neighbor_steps(gi as usize) {
-            for bb in neighbor_steps(bi as usize) {
+    for rr in neighbor_steps(ri) {
+        for gg in neighbor_steps(gi) {
+            for bb in neighbor_steps(bi) {
                 if rr > 5 || gg > 5 || bb > 5 {
                     continue;
                 }

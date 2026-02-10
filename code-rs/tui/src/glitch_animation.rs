@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use ratatui::buffer::Buffer;
 use ratatui::prelude::*;
 // Paragraph/Widget previously used; manual cell writes now keep static layer intact.
@@ -82,7 +84,7 @@ pub(crate) fn render_intro_animation_with_size_and_alpha_offset(
     }
     let end = (start + area.height as usize).min(lines.len());
     if start > 0 || end < lines.len() {
-        lines = lines[start..end].iter().cloned().collect();
+        lines = lines[start..end].to_vec();
         if full_width > 0 {
             for line in &mut lines {
                 let len = line.chars().count();

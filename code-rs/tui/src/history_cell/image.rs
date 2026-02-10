@@ -112,7 +112,10 @@ impl ImageOutputCell {
         if picker_ref.is_none() {
             *picker_ref = Some(Picker::from_fontsize((8, 16)));
         }
-        picker_ref.as_ref().unwrap().clone()
+        picker_ref
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| Picker::from_fontsize((8, 16)))
     }
 
     fn accent_style(style: &CardStyle) -> Style {
@@ -134,11 +137,10 @@ impl ImageOutputCell {
             return alt.to_string();
         }
         if let Some(path) = self.record.source_path.as_ref() {
-            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                if !name.trim().is_empty() {
+            if let Some(name) = path.file_name().and_then(|name| name.to_str())
+                && !name.trim().is_empty() {
                     return name.to_string();
                 }
-            }
             return path.display().to_string();
         }
         "Image".to_string()
@@ -382,9 +384,7 @@ impl ImageOutputCell {
     }
 
     fn compute_image_layout(&self, body_width: usize) -> Option<ImagePreviewLayout> {
-        if self.image_path().is_none() {
-            return None;
-        }
+        self.image_path()?;
 
         if body_width
             < IMAGE_LEFT_PAD + IMAGE_MIN_WIDTH + IMAGE_GAP + MIN_TEXT_WIDTH + TEXT_RIGHT_PADDING
@@ -399,12 +399,7 @@ impl ImageOutputCell {
         }
 
         let mut image_cols = max_image;
-        if image_cols > IMAGE_MAX_WIDTH {
-            image_cols = IMAGE_MAX_WIDTH;
-        }
-        if image_cols < IMAGE_MIN_WIDTH {
-            image_cols = IMAGE_MIN_WIDTH;
-        }
+        image_cols = image_cols.clamp(IMAGE_MIN_WIDTH, IMAGE_MAX_WIDTH);
 
         let rows = self.compute_image_rows(image_cols)?;
         Some(ImagePreviewLayout {
@@ -464,11 +459,10 @@ impl ImageOutputCell {
             .scroll((skip_rows, 0))
             .render(render_area, buf);
 
-        if let Some(layout) = preview_layout.as_ref() {
-            if let Some(path) = self.image_path() {
+        if let Some(layout) = preview_layout.as_ref()
+            && let Some(path) = self.image_path() {
                 self.render_image_preview(render_area, buf, skip_rows, layout, path);
             }
-        }
 
         let clear_start = area.x + draw_width;
         let clear_end = area.x + area.width;

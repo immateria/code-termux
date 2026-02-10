@@ -22,7 +22,6 @@ use uuid::Uuid;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::OutgoingNotification;
 use crate::session_store::{SessionEntry, SessionMap};
-use serde_json;
 
 pub async fn new_session(
     request_id: RequestId,

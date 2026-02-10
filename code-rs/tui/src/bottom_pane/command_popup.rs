@@ -65,7 +65,7 @@ impl CommandPopup {
     }
 
     pub(crate) fn subagent_name(&self, idx: usize) -> Option<&str> {
-        self.subagents.get(idx).map(|s| s.as_str())
+        self.subagents.get(idx).map(std::string::String::as_str)
     }
 
     /// Supply custom subagent command names (e.g., ["demo", "ship"]) to include in the

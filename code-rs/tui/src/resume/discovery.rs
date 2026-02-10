@@ -28,7 +28,7 @@ pub fn list_sessions_for_cwd(
 
     let code_home = code_home.to_path_buf();
     let cwd = cwd.to_path_buf();
-    let exclude_path = exclude_path.map(|p| p.to_path_buf());
+    let exclude_path = exclude_path.map(std::path::Path::to_path_buf);
 
     let fetch = async move {
         let catalog = SessionCatalog::new(code_home.clone());
@@ -49,11 +49,10 @@ pub fn list_sessions_for_cwd(
                     if entry.session_source == SessionSource::Mcp {
                         return false;
                     }
-                    if let Some(exclude) = exclude_path.as_deref() {
-                        if entry_to_rollout_path(&code_home, entry) == exclude {
+                    if let Some(exclude) = exclude_path.as_deref()
+                        && entry_to_rollout_path(&code_home, entry) == exclude {
                             return false;
                         }
-                    }
                     true
                 })
                 .map(|entry| entry_to_candidate(&code_home, entry))
@@ -68,7 +67,7 @@ pub fn list_sessions_for_cwd(
     // Execute the async fetch, reusing an existing runtime when available.
     match Handle::try_current() {
         Ok(handle) => {
-            let handle = handle.clone();
+            let handle = handle;
             match thread::Builder::new()
                 .name("resume-discovery".to_string())
                 .spawn(move || handle.block_on(fetch))
@@ -107,6 +106,6 @@ fn entry_to_candidate(code_home: &Path, entry: SessionIndexEntry) -> ResumeCandi
         modified_ts: Some(entry.last_event_at.clone()),
         user_message_count: entry.user_message_count,
         branch: entry.git_branch.clone(),
-        snippet: entry.last_user_snippet.clone(),
+        snippet: entry.last_user_snippet,
     }
 }

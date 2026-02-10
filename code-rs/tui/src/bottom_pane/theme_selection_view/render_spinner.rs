@@ -21,7 +21,7 @@ impl ThemeSelectionView {
         let count = names.len() + 1;
 
         // Reserve two rows (header + spacer).
-        let visible = available_height.saturating_sub(2).min(9).max(1);
+        let visible = available_height.saturating_sub(2).clamp(1, 9);
         let (start, _vis, _mid) = crate::util::list_window::anchored_window(
             self.selected_spinner_index,
             count,

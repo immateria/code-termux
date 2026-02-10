@@ -196,7 +196,7 @@ impl UndoTimelineView {
         let selected_height = self
             .entries
             .get(self.selected)
-            .map(|entry| entry.list_line_count())
+            .map(UndoTimelineEntry::list_line_count)
             .unwrap_or(1);
 
         if cumulative < self.top_row {
@@ -211,21 +211,19 @@ impl UndoTimelineView {
     }
 
     fn toggle_files(&mut self) {
-        if let Some(entry) = self.selected_entry() {
-            if entry.files_available {
+        if let Some(entry) = self.selected_entry()
+            && entry.files_available {
                 self.restore_files = !self.restore_files;
                 self.restore_files_forced_off = false;
             }
-        }
     }
 
     fn toggle_conversation(&mut self) {
-        if let Some(entry) = self.selected_entry() {
-            if entry.conversation_available {
+        if let Some(entry) = self.selected_entry()
+            && entry.conversation_available {
                 self.restore_conversation = !self.restore_conversation;
                 self.restore_conversation_forced_off = false;
             }
-        }
     }
 
     fn confirm(&mut self) {
@@ -247,7 +245,7 @@ impl UndoTimelineView {
     }
 
     fn total_list_height(&self) -> usize {
-        self.entries.iter().map(|entry| entry.list_line_count()).sum()
+        self.entries.iter().map(UndoTimelineEntry::list_line_count).sum()
     }
 
     fn visible_range(&self) -> (usize, usize) {
@@ -270,7 +268,7 @@ impl UndoTimelineView {
         while start_entry < self.selected {
             let span: usize = self.entries[start_entry..=self.selected]
                 .iter()
-                .map(|entry| entry.list_line_count())
+                .map(UndoTimelineEntry::list_line_count)
                 .sum();
             if span <= MAX_VISIBLE_LIST_ROWS {
                 break;
@@ -508,12 +506,10 @@ impl<'a> BottomPaneView<'a> for UndoTimelineView {
                         self.toggle_conversation();
                     } else if entry.files_available && !entry.conversation_available {
                         self.toggle_files();
+                    } else if self.restore_files {
+                        self.toggle_conversation();
                     } else {
-                        if self.restore_files {
-                            self.toggle_conversation();
-                        } else {
-                            self.toggle_files();
-                        }
+                        self.toggle_files();
                     }
                 }
             }

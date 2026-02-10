@@ -142,14 +142,12 @@ fn load_dotenv() {
     let codex_home_missing = std::env::var("CODEX_HOME")
         .map(|v| v.trim().is_empty())
         .unwrap_or(true);
-    if codex_home_missing {
-        if let Ok(code_home) = std::env::var("CODE_HOME") {
-            if !code_home.trim().is_empty() {
+    if codex_home_missing
+        && let Ok(code_home) = std::env::var("CODE_HOME")
+            && !code_home.trim().is_empty() {
                 // Safe: still single-threaded during startup.
                 unsafe { std::env::set_var("CODEX_HOME", code_home) };
             }
-        }
-    }
 }
 
 /// Helper to set vars from a dotenvy iterator while filtering out `CODEX_` keys.

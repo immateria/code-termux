@@ -133,7 +133,7 @@ impl ShellSelectionView {
                 return;
             }
 
-            let _ = self.app_event_tx.send(AppEvent::UpdateShellSelection {
+            self.app_event_tx.send(AppEvent::UpdateShellSelection {
                 path: shell.preset.command.clone(),
                 args: shell.preset.default_args.clone(),
                 script_style: shell.preset.script_style.clone(),
@@ -148,7 +148,7 @@ impl ShellSelectionView {
             return;
         }
 
-        let _ = self.app_event_tx.send(AppEvent::UpdateShellSelection {
+        self.app_event_tx.send(AppEvent::UpdateShellSelection {
             path,
             args: vec![],
             script_style: None,
@@ -158,7 +158,7 @@ impl ShellSelectionView {
 
     fn send_closed(&mut self, confirmed: bool) {
         self.is_complete = true;
-        let _ = self.app_event_tx.send(AppEvent::ShellSelectionClosed { confirmed });
+        self.app_event_tx.send(AppEvent::ShellSelectionClosed { confirmed });
     }
 
     /// Find which item index a screen position corresponds to
@@ -172,11 +172,10 @@ impl ShellSelectionView {
         }
 
         // Check custom option
-        if let Some(rect) = *self.custom_rect.borrow() {
-            if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+        if let Some(rect) = *self.custom_rect.borrow()
+            && x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
                 return Some(self.shells.len());
             }
-        }
 
         None
     }

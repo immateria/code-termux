@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_methods)]
+
 use ratatui::prelude::Color;
 use std::time::Duration;
 

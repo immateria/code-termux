@@ -97,13 +97,13 @@ impl AgentEditorView {
             .params_ro
             .text()
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>();
         let wr = self
             .params_wr
             .text()
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>();
         let ro_opt = if ro.is_empty() { None } else { Some(ro) };
         let wr_opt = if wr.is_empty() { None } else { Some(wr) };
@@ -306,11 +306,9 @@ impl AgentEditorView {
                 for dir in std::env::split_paths(&path_os) {
                     if dir.as_os_str().is_empty() { continue; }
                     let candidate = dir.join(cmd);
-                    if let Ok(meta) = std::fs::metadata(&candidate) {
-                        if meta.is_file() {
-                            if meta.permissions().mode() & 0o111 != 0 { return true; }
-                        }
-                    }
+                    if let Ok(meta) = std::fs::metadata(&candidate)
+                        && meta.is_file()
+                            && meta.permissions().mode() & 0o111 != 0 { return true; }
                 }
                 false
             }

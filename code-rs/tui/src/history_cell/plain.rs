@@ -84,15 +84,13 @@ impl PlainHistoryCell {
     }
     pub(crate) fn from_state(state: PlainMessageState) -> Self {
         let mut kind = history_cell_kind_from_plain(state.kind);
-        if kind == HistoryCellType::User {
-            if let Some(first_line) = state.lines.first() {
-                if first_line.spans.first().map_or(false, |span| {
+        if kind == HistoryCellType::User
+            && let Some(first_line) = state.lines.first()
+                && first_line.spans.first().is_some_and(|span| {
                     span.text.starts_with("[Compaction Summary]")
                 }) {
                     kind = HistoryCellType::CompactionSummary;
                 }
-            }
-        }
         Self {
             state: PlainCellState {
                 message: state,
@@ -135,7 +133,7 @@ impl PlainHistoryCell {
         let mut cache = self.cached_layout.borrow_mut();
         let needs_rebuild = cache
             .as_ref()
-            .map_or(true, |cached| {
+            .is_none_or(|cached| {
                 cached.requested_width != requested_width
                     || cached.effective_width != effective_width
             });
@@ -202,7 +200,7 @@ impl PlainHistoryCell {
                 .style(bg_style)
                 .padding(Padding {
                     left: 0,
-                    right: crate::layout_consts::USER_HISTORY_RIGHT_PAD.into(),
+                    right: crate::layout_consts::USER_HISTORY_RIGHT_PAD,
                     top: 0,
                     bottom: 0,
                 });
@@ -283,11 +281,10 @@ impl HistoryCell for PlainHistoryCell {
         let theme = current_theme();
         let mut lines: Vec<Line<'static>> = Vec::new();
 
-        if !self.hide_header() {
-            if let Some(header) = self.header_line(&theme) {
+        if !self.hide_header()
+            && let Some(header) = self.header_line(&theme) {
                 lines.push(header);
             }
-        }
 
         lines.extend(message_lines_to_ratatui(self.state.body(), &theme));
         lines
@@ -299,7 +296,7 @@ impl HistoryCell for PlainHistoryCell {
 
     fn desired_height(&self, width: u16) -> u16 {
         let effective_width = if matches!(self.state.kind, HistoryCellType::User) {
-            width.saturating_sub(crate::layout_consts::USER_HISTORY_RIGHT_PAD.into())
+            width.saturating_sub(crate::layout_consts::USER_HISTORY_RIGHT_PAD)
         } else {
             width
         };
@@ -316,7 +313,7 @@ impl HistoryCell for PlainHistoryCell {
         let requested_width = area.width;
         let effective_width = if matches!(self.state.kind, HistoryCellType::User) {
             requested_width
-                .saturating_sub(crate::layout_consts::USER_HISTORY_RIGHT_PAD.into())
+                .saturating_sub(crate::layout_consts::USER_HISTORY_RIGHT_PAD)
         } else {
             requested_width
         };
@@ -669,7 +666,7 @@ pub(crate) fn new_user_prompt(message: String) -> PlainMessageState {
         },
     );
     // Build content lines with ANSI converted to styled spans
-    let content: Vec<Line<'static>> = sanitized.lines().map(|l| ansi_escape_line(l)).collect();
+    let content: Vec<Line<'static>> = sanitized.lines().map(ansi_escape_line).collect();
     let content = trim_empty_lines(content);
     lines.extend(content);
     // No empty line at end - trimming and spacing handled by renderer
@@ -699,7 +696,7 @@ pub(crate) fn new_queued_user_prompt(message: String) -> PlainMessageState {
             debug_markers: false,
         },
     );
-    let content: Vec<Line<'static>> = sanitized.lines().map(|l| ansi_escape_line(l)).collect();
+    let content: Vec<Line<'static>> = sanitized.lines().map(ansi_escape_line).collect();
     let content = trim_empty_lines(content);
     lines.extend(content);
     plain_message_state_from_lines(lines, HistoryCellType::User)
@@ -728,13 +725,13 @@ pub(crate) fn new_error_event(message: String) -> PlainMessageState {
     plain_message_state_from_lines(lines, HistoryCellType::Error)
 }
 
-pub(crate) fn new_reasoning_output(reasoning_effort: &ReasoningEffort) -> PlainMessageState {
+pub(crate) fn new_reasoning_output(reasoning_effort: ReasoningEffort) -> PlainMessageState {
     let lines = vec![
         Line::from(""),
         Line::from("Reasoning Effort")
             .fg(crate::colors::keyword())
             .bold(),
-        Line::from(format!("Value: {}", reasoning_effort)),
+        Line::from(format!("Value: {reasoning_effort}")),
     ];
     plain_message_state_from_lines(lines, HistoryCellType::Notice)
 }
@@ -745,8 +742,8 @@ pub(crate) fn new_model_output(model: &str, effort: ReasoningEffort) -> PlainMes
         Line::from("Model Selection")
             .fg(crate::colors::keyword())
             .bold(),
-        Line::from(format!("Model: {}", model)),
-        Line::from(format!("Reasoning Effort: {}", effort)),
+        Line::from(format!("Model: {model}")),
+        Line::from(format!("Reasoning Effort: {effort}")),
     ];
     plain_message_state_from_lines(lines, HistoryCellType::Notice)
 }

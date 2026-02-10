@@ -1523,15 +1523,14 @@ impl SkillsSettingsView {
     }
 
     fn save_current(&mut self) {
-        if let Some(skill) = self.skills.get(self.selected) {
-            if skill.scope != SkillScope::User {
+        if let Some(skill) = self.skills.get(self.selected)
+            && skill.scope != SkillScope::User {
                 self.status = Some((
                     "Only user skills can be saved".to_string(),
                     Style::default().fg(colors::error()),
                 ));
                 return;
             }
-        }
 
         let existing_skill = self.skills.get(self.selected).cloned();
 
@@ -1642,8 +1641,8 @@ impl SkillsSettingsView {
             let previous_style = frontmatter_value(&previous_skill.content, "shell_style")
                 .and_then(|value| ShellScriptStyle::parse(&value));
             let changed_identity = previous_name != name || previous_style != parsed_shell_style;
-            if changed_identity {
-                if let Some(previous_style) = previous_style {
+            if changed_identity
+                && let Some(previous_style) = previous_style {
                     let previous_identifiers =
                         unique_profile_identifiers([previous_name.as_str(), previous_skill.name.as_str()]);
                     for identifier in &previous_identifiers {
@@ -1667,7 +1666,6 @@ impl SkillsSettingsView {
                         }
                     }
                 }
-            }
         }
 
         if let Err(msg) = self.persist_style_profile_mode(
@@ -1710,7 +1708,7 @@ impl SkillsSettingsView {
             path,
             description,
             scope: SkillScope::User,
-            content: body.clone(),
+            content: body,
         };
         if self.selected < updated.len() {
             updated[self.selected] = new_entry;
@@ -1743,15 +1741,14 @@ impl SkillsSettingsView {
             return;
         }
 
-        if let Err(err) = fs::remove_file(&skill.path) {
-            if err.kind() != std::io::ErrorKind::NotFound {
+        if let Err(err) = fs::remove_file(&skill.path)
+            && err.kind() != std::io::ErrorKind::NotFound {
                 self.status = Some((
                     format!("Delete failed: {err}"),
                     Style::default().fg(colors::error()),
                 ));
                 return;
             }
-        }
 
         if let Some(parent) = skill.path.parent() {
             let _ = fs::remove_dir(parent);
