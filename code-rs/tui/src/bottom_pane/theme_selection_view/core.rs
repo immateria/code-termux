@@ -1,4 +1,5 @@
 use super::*;
+use code_login::AuthMode;
 
 impl ThemeSelectionView {
     pub fn new(
@@ -720,9 +721,9 @@ impl ThemeSelectionView {
                 // Use the same auth preference as the active Codex session.
                 // When logged in with ChatGPT, prefer ChatGPT auth; otherwise fall back to API key.
                 let preferred_auth = if cfg.using_chatgpt_auth {
-                    code_protocol::mcp_protocol::AuthMode::ChatGPT
+                    AuthMode::ChatGPT
                 } else {
-                    code_protocol::mcp_protocol::AuthMode::ApiKey
+                    AuthMode::ApiKey
                 };
                 let auth_mgr = code_core::AuthManager::shared_with_mode_and_originator(
                     cfg.code_home.clone(),
@@ -769,6 +770,8 @@ impl ThemeSelectionView {
                         content: vec![code_protocol::models::ContentItem::InputText {
                             text: developer,
                         }],
+                        end_turn: None,
+                        phase: None,
                     },
                     code_protocol::models::ResponseItem::Message {
                         id: None,
@@ -776,6 +779,8 @@ impl ThemeSelectionView {
                         content: vec![code_protocol::models::ContentItem::InputText {
                             text: user_prompt,
                         }],
+                        end_turn: None,
+                        phase: None,
                     },
                 ];
 
@@ -824,7 +829,7 @@ impl ThemeSelectionView {
                 let mut last_err: Option<String> = None;
                 while let Some(ev) = stream.next().await {
                     match ev {
-                        Ok(code_core::ResponseEvent::Created) => { tracing::info!("LLM: created"); let _ = progress_tx.send(ProgressMsg::SetStatus("(starting generation)".to_string())); }
+                        Ok(code_core::ResponseEvent::Created { .. }) => { tracing::info!("LLM: created"); let _ = progress_tx.send(ProgressMsg::SetStatus("(starting generation)".to_string())); }
                         Ok(code_core::ResponseEvent::ReasoningSummaryDelta { delta, .. }) => { tracing::info!(target: "spinner", "LLM[thinking]: {}", delta); let _ = progress_tx.send(ProgressMsg::ThinkingDelta(delta.clone())); think_sum.push_str(&delta); }
                         Ok(code_core::ResponseEvent::ReasoningContentDelta { delta, .. }) => { tracing::info!(target: "spinner", "LLM[reasoning]: {}", delta); }
                         Ok(code_core::ResponseEvent::OutputTextDelta { delta, .. }) => { tracing::info!(target: "spinner", "LLM[delta]: {}", delta); let _ = progress_tx.send(ProgressMsg::OutputDelta(delta.clone())); out.push_str(&delta); }
@@ -1091,7 +1096,7 @@ impl ThemeSelectionView {
                 };
                 let auth_mgr = code_core::AuthManager::shared_with_mode_and_originator(
                     cfg.code_home.clone(),
-                    code_protocol::mcp_protocol::AuthMode::ApiKey,
+                    AuthMode::ApiKey,
                     cfg.responses_originator_header.clone(),
                 );
                 let debug_logger = match code_core::debug_logger::DebugLogger::new(false) {
@@ -1135,6 +1140,8 @@ impl ThemeSelectionView {
                         content: vec![code_protocol::models::ContentItem::InputText {
                             text: developer,
                         }],
+                        end_turn: None,
+                        phase: None,
                     },
                     code_protocol::models::ResponseItem::Message {
                         id: None,
@@ -1142,6 +1149,8 @@ impl ThemeSelectionView {
                         content: vec![code_protocol::models::ContentItem::InputText {
                             text: user_prompt,
                         }],
+                        end_turn: None,
+                        phase: None,
                     },
                 ];
 
@@ -1212,7 +1221,7 @@ impl ThemeSelectionView {
                 let mut last_err: Option<String> = None;
                 while let Some(ev) = stream.next().await {
                     match ev {
-                        Ok(code_core::ResponseEvent::Created) => {
+                        Ok(code_core::ResponseEvent::Created { .. }) => {
                             let _ = progress_tx.send(ProgressMsg::SetStatus("(starting generation)".to_string()));
                         }
                         Ok(code_core::ResponseEvent::ReasoningSummaryDelta { delta, .. }) => {

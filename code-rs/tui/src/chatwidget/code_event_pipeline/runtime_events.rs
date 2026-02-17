@@ -278,13 +278,17 @@ impl ChatWidget<'_> {
         if self.auto_resolve_enabled() {
             self.auto_resolve_handle_review_enter();
         }
-        let hint = review_request.user_facing_hint.trim();
+        let hint = review_request
+            .user_facing_hint
+            .as_deref()
+            .unwrap_or("")
+            .trim();
         let banner = if hint.is_empty() {
             ">> Code review started <<".to_string()
         } else {
             format!(">> Code review started: {hint} <<")
         };
-        self.active_review_hint = Some(review_request.user_facing_hint.clone());
+        self.active_review_hint = review_request.user_facing_hint.clone();
         self.active_review_prompt = Some(review_request.prompt.clone());
         self.push_background_before_next_output(banner);
 

@@ -101,7 +101,7 @@ async fn run_remote_compact_task_inner(
             ..Prompt::default()
         };
 
-        sess.apply_remote_model_overrides(&mut prompt).await;
+        let _used_fallback_model_metadata = sess.apply_remote_model_overrides(&mut prompt).await;
 
         match turn_context
             .client
@@ -173,6 +173,7 @@ async fn run_remote_compact_task_inner(
 
     let rollout_item = RolloutItem::Compacted(CompactedItem {
         message: "Conversation history compacted.".to_string(),
+        replacement_history: None,
     });
     sess.persist_rollout_items(&[rollout_item]).await;
 

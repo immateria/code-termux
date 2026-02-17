@@ -310,7 +310,7 @@ Have we met every part of this goal and is there no further work to do?"#
         self.auto_state.suppress_next_cli_display = false;
         let effects = self
             .auto_state
-            .schedule_cli_prompt(decision_seq, prompt_text, countdown_override);
+            .schedule_cli_prompt(decision_seq, prompt_text, None, None, countdown_override);
         self.auto_apply_controller_effects(effects);
     }
 

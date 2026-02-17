@@ -15,6 +15,12 @@ use super::streaming::{
     write_agent_file,
 };
 
+pub(super) const MAX_EVENT_SEQ_SUB_IDS: usize = 1024;
+pub(super) const MAX_BACKGROUND_SEQ_SUB_IDS: usize = 1024;
+pub(super) const MAX_WAIT_TRACKED_BATCHES: usize = 1024;
+pub(super) const MAX_WAIT_TRACKED_AGENT_IDS_PER_BATCH: usize = 2048;
+pub(super) const MAX_PENDING_MANUAL_COMPACTS: usize = 64;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ApprovedCommandPattern {
     argv: Vec<String>,
@@ -144,7 +150,11 @@ pub(super) struct State {
     /// `return_all=false`.
     /// This enables sequential waiting behavior across multiple calls.
     pub(super) seen_completed_agents_by_batch: HashMap<String, HashSet<String>>,
-    /// Tracks agent batches that already triggered a wake-up after completion.
+    /// FIFO order for `seen_completed_agents_by_batch` so old batches can be
+    /// evicted under sustained long-session churn.
+    pub(super) seen_completed_batch_order: VecDeque<String>,
+    /// Tracks agent batches that already triggered a wake-up after completion,
+    /// so we do not enqueue duplicate out-of-turn status messages.
     pub(super) agent_completion_wake_batches: HashSet<String>,
     /// Scratchpad that buffers streamed items/deltas for the current HTTP attempt
     /// so we can seed retries without losing progress.
@@ -437,6 +447,13 @@ impl Session {
 
     fn next_background_sequence(&self, sub_id: &str) -> u64 {
         let mut state = self.state.lock().unwrap();
+        if state.background_seq_by_sub_id.len() > MAX_BACKGROUND_SEQ_SUB_IDS {
+            trim_sub_id_sequence_map(
+                &mut state.background_seq_by_sub_id,
+                MAX_BACKGROUND_SEQ_SUB_IDS,
+                "background_seq_by_sub_id",
+            );
+        }
         let entry = state
             .background_seq_by_sub_id
             .entry(sub_id.to_string())
@@ -475,7 +492,7 @@ impl Session {
         &self.cwd
     }
 
-    pub(super) async fn apply_remote_model_overrides(&self, prompt: &mut Prompt) {
+    pub(super) async fn apply_remote_model_overrides(&self, prompt: &mut Prompt) -> bool {
         let configured_model = self.client.get_model();
 
         if prompt.model_override.is_none() {
@@ -506,16 +523,24 @@ impl Session {
             }
         }
 
+        let mut used_fallback_model_metadata = false;
         if prompt.model_family_override.is_none() {
             let model_slug = prompt
                 .model_override
                 .as_deref()
                 .unwrap_or(configured_model.as_str());
-            let base_family = find_family_for_model(model_slug)
-                .unwrap_or_else(|| derive_default_model_family(model_slug));
+            let base_family = if let Some(family) = find_family_for_model(model_slug) {
+                family
+            } else {
+                used_fallback_model_metadata = true;
+                derive_default_model_family(model_slug)
+            };
             let personality = self.client.model_personality();
 
             let family = if let Some(remote) = self.remote_models_manager.as_ref() {
+                if remote.has_model_slug(model_slug).await {
+                    used_fallback_model_metadata = false;
+                }
                 remote
                     .apply_remote_overrides_with_personality(
                         model_slug,
@@ -528,14 +553,14 @@ impl Session {
             };
             prompt.model_family_override = Some(family);
         }
+        used_fallback_model_metadata
     }
 
     pub(crate) async fn record_bridge_event(&self, text: String) {
         let message = ResponseItem::Message {
             id: None,
             role: "developer".to_string(),
-            content: vec![ContentItem::InputText { text }],
-        };
+            content: vec![ContentItem::InputText { text }], end_turn: None, phase: None};
         self.record_conversation_items(&[message]).await;
     }
 
@@ -847,6 +872,25 @@ impl Session {
         state.turn_scratchpad = None;
     }
 }
+
+fn trim_sub_id_sequence_map(
+    map: &mut HashMap<String, u64>,
+    cap: usize,
+    label: &str,
+) {
+    while map.len() > cap {
+        let Some(key) = map.keys().next().cloned() else {
+            break;
+        };
+        map.remove(&key);
+    }
+    warn!(
+        label,
+        cap,
+        retained = map.len(),
+        "trimmed long-lived sequence map to cap memory growth"
+    );
+}
 impl Session {
     pub(super) fn set_task(&self, agent: AgentTask) {
         let mut state = self.state.lock().unwrap();
@@ -1088,9 +1132,11 @@ impl Session {
             &sub_id,
             EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                 call_id: call_id.clone(),
+                turn_id: sub_id.clone(),
                 command,
                 cwd,
                 reason,
+                network_approval_context: None,
             }),
         );
         let _ = self.tx_event.send(event).await;
@@ -1361,7 +1407,13 @@ impl Session {
                 true
             })
             .map(|item| {
-                if let ResponseItem::Message { id, role, content } = item {
+                if let ResponseItem::Message {
+                    id,
+                    role,
+                    content,
+                    ..
+                } = item
+                {
                     if role == "user" {
                         // Filter out ephemeral content from user messages
                         let mut filtered_content: Vec<ContentItem> = Vec::new();
@@ -1393,11 +1445,16 @@ impl Session {
                         ResponseItem::Message {
                             id,
                             role,
-                            content: filtered_content,
-                        }
+                            content: filtered_content, end_turn: None, phase: None}
                     } else {
                         // Keep assistant messages unchanged
-                        ResponseItem::Message { id, role, content }
+                        ResponseItem::Message {
+                            id,
+                            role,
+                            content,
+                            end_turn: None,
+                            phase: None,
+                        }
                     }
                 } else {
                     item
@@ -1430,8 +1487,7 @@ impl Session {
             .get_auth_manager()
             .and_then(|manager| manager.auth())
             .map(|auth| auth.mode);
-        let sanitize_encrypted_reasoning =
-            !current_auth_mode.is_some_and(AuthMode::is_chatgpt);
+        let sanitize_encrypted_reasoning = !current_auth_mode.is_some_and(|mode| mode.is_chatgpt());
 
         if sanitize_encrypted_reasoning {
             let mut stripped = 0usize;
@@ -1769,8 +1825,7 @@ impl Session {
                             role: "user".to_string(),
                             content: vec![ContentItem::InputText {
                                 text: user_msg_event.message.clone(),
-                            }],
-                        };
+                            }], end_turn: None, phase: None};
                         process_rollout_env_item(&mut replay_ctx, &response_item);
                         history.push(response_item);
                     }
@@ -1830,6 +1885,13 @@ impl Session {
     pub fn enqueue_manual_compact(&self, sub_id: String) -> bool {
         let mut state = self.state.lock().unwrap();
         let was_empty = state.pending_manual_compacts.is_empty();
+        while state.pending_manual_compacts.len() >= MAX_PENDING_MANUAL_COMPACTS {
+            state.pending_manual_compacts.pop_front();
+            warn!(
+                cap = MAX_PENDING_MANUAL_COMPACTS,
+                "dropped oldest pending manual compact request to cap queue growth"
+            );
+        }
         state.pending_manual_compacts.push_back(sub_id);
         was_empty
     }
@@ -1898,7 +1960,7 @@ impl Session {
         tool: &str,
         arguments: Option<serde_json::Value>,
         timeout: Option<Duration>,
-    ) -> anyhow::Result<CallToolResult> {
+    ) -> anyhow::Result<mcp_types::CallToolResult> {
         self.mcp_connection_manager
             .call_tool(server, tool, arguments, timeout)
             .await

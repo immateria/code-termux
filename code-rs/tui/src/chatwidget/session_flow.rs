@@ -760,6 +760,8 @@ impl ChatWidget<'_> {
             id: None,
             role: "user".to_string(),
             content: vec![ContentItem::InputText { text }],
+            end_turn: None,
+            phase: None,
         })
     }
 
@@ -842,6 +844,8 @@ impl ChatWidget<'_> {
             id: None,
             role: "assistant".to_string(),
             content: vec![ContentItem::OutputText { text }],
+            end_turn: None,
+            phase: None,
         })
     }
 
@@ -1033,6 +1037,8 @@ impl ChatWidget<'_> {
                     id: Some("auto-drive-reasoning".to_string()),
                     role: "user".to_string(),
                     content: vec![code_protocol::models::ContentItem::InputText { text }],
+                    end_turn: None,
+                    phase: None,
                 }
             } else {
                 match role {
@@ -1161,6 +1167,8 @@ impl ChatWidget<'_> {
                         id: None,
                         role: "user".to_string(),
                         content: vec![content],
+                        end_turn: None,
+                        phase: None,
                     });
                 }
                 crate::history_cell::HistoryCellType::Assistant => {
@@ -1181,6 +1189,8 @@ impl ChatWidget<'_> {
                         id: None,
                         role: "assistant".to_string(),
                         content: vec![content],
+                        end_turn: None,
+                        phase: None,
                     });
                 }
                 crate::history_cell::HistoryCellType::PlanUpdate => {
@@ -1222,6 +1232,8 @@ impl ChatWidget<'_> {
                             id: None,
                             role: "assistant".to_string(),
                             content: vec![content],
+                            end_turn: None,
+                            phase: None,
                         });
                     }
                 }

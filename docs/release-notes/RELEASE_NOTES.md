@@ -1,15 +1,17 @@
-## @just-every/code v0.6.61
+## @just-every/code v0.6.70
 
-This release improves authentication handling, sandbox networking, and skills policy support.
+This release improves search persistence, Auto Drive routing control, and sandbox GPU access.
 
 ### Changes
-- Core: align auth token schema and websocket errors.
-- Sandbox: enforce proxy-aware network routing in sandbox.
-- Skills: add SkillPolicy metadata with allow_implicit_invocation support.
-- App Server: use chatgpt_account_id/chatgpt_plan_type for external auth.
+- Core/Search: persist and restore tool selection after search.
+- Core/Search: warn when falling back to default metadata and keep selection.
+- Auto Drive: add configurable CLI routing entries.
+- Linux Sandbox: allow GPU device paths in landlock.
 
 ### Install
-```
+```bash
 npm install -g @just-every/code@latest
 code
 ```
+
+Compare: https://github.com/just-every/code/compare/v0.6.69...v0.6.70

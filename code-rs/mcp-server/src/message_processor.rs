@@ -19,7 +19,7 @@ use crate::session_store::SessionMap;
 use agent_client_protocol as acp;
 use anyhow::anyhow;
 use anyhow::Context as _;
-use code_app_server_protocol::ClientRequest;
+use code_protocol::mcp_protocol::ClientRequest;
 use code_protocol::ConversationId;
 use code_protocol::protocol::SessionSource;
 
@@ -1483,8 +1483,28 @@ struct ModelSelection {
     effort: ReasoningEffort,
 }
 
+fn model_picker_auth_state(config: &Config) -> (Option<AuthMode>, bool) {
+    let preferred_auth_mode = if config.using_chatgpt_auth {
+        AuthMode::Chatgpt
+    } else {
+        AuthMode::ApiKey
+    };
+    let auth_manager = AuthManager::shared_with_mode_and_originator(
+        config.code_home.clone(),
+        preferred_auth_mode,
+        config.responses_originator_header.clone(),
+    );
+    let auth_mode = auth_manager
+        .auth()
+        .map(|auth| auth.mode)
+        .or(Some(preferred_auth_mode));
+    let supports_pro_only_models = auth_manager.supports_pro_only_models();
+    (auth_mode, supports_pro_only_models)
+}
+
 fn session_models_from_config(config: &Config) -> Option<acp::SessionModelState> {
-    let presets = builtin_model_presets(None);
+    let (auth_mode, supports_pro_only_models) = model_picker_auth_state(config);
+    let presets = builtin_model_presets(auth_mode, supports_pro_only_models);
     let mut available_models = Vec::new();
     let mut current_model_id: Option<acp::ModelId> = None;
 
@@ -1554,7 +1574,9 @@ fn resolve_model_selection(model_id: &acp::ModelId, config: &Config) -> Option<M
     let requested = model_id.to_string();
     let requested_lower = requested.to_ascii_lowercase();
 
-    for preset in builtin_model_presets(None).iter() {
+    let (auth_mode, supports_pro_only_models) = model_picker_auth_state(config);
+
+    for preset in builtin_model_presets(auth_mode, supports_pro_only_models).iter() {
         if preset.id.eq_ignore_ascii_case(&requested)
             || preset.display_name.eq_ignore_ascii_case(&requested)
             || preset.model.eq_ignore_ascii_case(&requested)

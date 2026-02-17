@@ -280,8 +280,7 @@ impl From<EnvironmentContext> for ResponseItem {
             role: "user".to_string(),
             content: vec![ContentItem::InputText {
                 text: ec.serialize_to_xml(),
-            }],
-        }
+            }], end_turn: None, phase: None}
     }
 }
 
@@ -731,8 +730,7 @@ fn snapshot_to_response_item(
             text: format!(
                 "{ENVIRONMENT_CONTEXT_OPEN_TAG}\n{json}\n{ENVIRONMENT_CONTEXT_CLOSE_TAG}"
             ),
-        }],
-    })
+        }], end_turn: None, phase: None})
 }
 
 fn delta_to_response_item(
@@ -747,8 +745,7 @@ fn delta_to_response_item(
             text: format!(
                 "{ENVIRONMENT_CONTEXT_DELTA_OPEN_TAG}\n{json}\n{ENVIRONMENT_CONTEXT_DELTA_CLOSE_TAG}"
             ),
-        }],
-    })
+        }], end_turn: None, phase: None})
 }
 
 fn browser_snapshot_to_response_item(
@@ -763,8 +760,7 @@ fn browser_snapshot_to_response_item(
             text: format!(
                 "{BROWSER_SNAPSHOT_OPEN_TAG}\n{json}\n{BROWSER_SNAPSHOT_CLOSE_TAG}"
             ),
-        }],
-    })
+        }], end_turn: None, phase: None})
 }
 
 fn detect_operating_system_info() -> Option<OperatingSystemInfo> {

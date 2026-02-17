@@ -896,6 +896,9 @@ name = "code-app-server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "assert_cmd",
+ "clap",
+ "code-app-server-protocol",
  "code-arg0",
  "code-common",
  "code-core",
@@ -904,9 +907,15 @@ dependencies = [
  "code-mcp-types",
  "code-protocol",
  "code-utils-json-to-toml",
+ "codex-utils-absolute-path",
+ "futures",
+ "owo-colors",
  "serde",
  "serde_json",
+ "sha1",
  "tokio",
+ "tokio-tungstenite",
+ "toml 0.9.8",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -916,8 +925,23 @@ dependencies = [
 name = "code-app-server-protocol"
 version = "0.0.0"
 dependencies = [
- "code-mcp-types",
+ "anyhow",
+ "clap",
  "code-protocol",
+ "codex-experimental-api-macros",
+ "codex-utils-absolute-path",
+ "codex-utils-cargo-bin",
+ "inventory",
+ "pretty_assertions",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "similar",
+ "strum_macros 0.27.2",
+ "tempfile",
+ "thiserror 2.0.17",
+ "ts-rs",
+ "uuid",
 ]
 
 [[package]]
@@ -953,6 +977,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "code-app-server-protocol",
  "code-common",
  "code-core",
  "code-git-tooling",
@@ -1084,7 +1109,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "supports-color",
+ "supports-color 3.0.2",
  "tar",
  "tempfile",
  "tokio",
@@ -1176,6 +1201,7 @@ dependencies = [
  "code-protocol",
  "code-rmcp-client",
  "code-version",
+ "codex-utils-absolute-path",
  "core-foundation 0.9.4",
  "crc32fast",
  "dirs",
@@ -1261,7 +1287,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
- "supports-color",
+ "supports-color 3.0.2",
  "tempfile",
  "tokio",
  "tracing",
@@ -1316,8 +1342,12 @@ name = "code-git-tooling"
 version = "0.0.0"
 dependencies = [
  "pretty_assertions",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.17",
+ "ts-rs",
  "walkdir",
 ]
 
@@ -1450,10 +1480,14 @@ name = "code-protocol"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "code-execpolicy",
+ "code-git-tooling",
  "code-mcp-types",
+ "codex-utils-absolute-path",
+ "codex-utils-image",
  "icu_decimal",
  "icu_locale_core",
+ "icu_provider",
  "mime_guess",
  "pretty_assertions",
  "schemars 0.8.22",
@@ -1569,7 +1603,7 @@ dependencies = [
  "strip-ansi-escapes",
  "strum 0.27.2",
  "strum_macros 0.27.2",
- "supports-color",
+ "supports-color 3.0.2",
  "syntect",
  "tempfile",
  "textwrap 0.16.2",
@@ -1613,6 +1647,59 @@ dependencies = [
 [[package]]
 name = "code-version"
 version = "0.0.0"
+
+[[package]]
+name = "codex-experimental-api-macros"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.108",
+]
+
+[[package]]
+name = "codex-utils-absolute-path"
+version = "0.0.0"
+dependencies = [
+ "dirs",
+ "path-absolutize",
+ "pretty_assertions",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ts-rs",
+]
+
+[[package]]
+name = "codex-utils-cache"
+version = "0.0.0"
+dependencies = [
+ "lru",
+ "sha1",
+ "tokio",
+]
+
+[[package]]
+name = "codex-utils-cargo-bin"
+version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "runfiles",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "codex-utils-image"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "codex-utils-cache",
+ "image 0.25.8",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+]
 
 [[package]]
 name = "color-eyre"
@@ -4358,6 +4445,10 @@ name = "owo-colors"
 version = "4.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c6901729fa79e91a0913333229e9ca5dc725089d1c363b2f4b4760709dc4a52"
+dependencies = [
+ "supports-color 2.1.0",
+ "supports-color 3.0.2",
+]
 
 [[package]]
 name = "parking"
@@ -5253,6 +5344,11 @@ dependencies = [
  "syn 2.0.108",
  "unicode-ident",
 ]
+
+[[package]]
+name = "runfiles"
+version = "0.1.0"
+source = "git+https://github.com/dzbarsky/rules_rust?rev=b56cbaa8465e74127f1ea216f813cd377295ad81#b56cbaa8465e74127f1ea216f813cd377295ad81"
 
 [[package]]
 name = "rustc-demangle"
@@ -6166,6 +6262,16 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "supports-color"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6398cde53adc3c4557306a96ce67b302968513830a77a95b2b17305d9719a89"
+dependencies = [
+ "is-terminal",
+ "is_ci",
+]
 
 [[package]]
 name = "supports-color"

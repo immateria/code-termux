@@ -1,4 +1,5 @@
 use super::*;
+use code_protocol::protocol::ReviewTarget;
 
 impl ChatWidget<'_> {
     pub(super) fn auto_resolve_enabled(&self) -> bool {
@@ -25,15 +26,10 @@ impl ChatWidget<'_> {
     pub(super) fn auto_resolve_commit_sha(&self) -> Option<String> {
         self.auto_resolve_state
             .as_ref()
-            .and_then(|state| state.metadata.as_ref())
-            .and_then(|metadata| metadata.commit.clone())
-    }
-
-    pub(super) fn auto_resolve_scope(&self) -> Option<String> {
-        self.auto_resolve_state
-            .as_ref()
-            .and_then(|state| state.metadata.as_ref())
-            .and_then(|metadata| metadata.scope.clone())
+            .and_then(|state| match &state.target {
+                ReviewTarget::Commit { sha, .. } => Some(sha.clone()),
+                _ => None,
+            })
     }
 
     pub(super) fn worktree_has_uncommitted_changes(&self) -> Option<bool> {
@@ -312,11 +308,7 @@ impl ChatWidget<'_> {
             preface.push_str("\n\nFindings:\n");
             preface.push_str(&summary);
         }
-        if self
-            .auto_resolve_scope()
-            .as_deref()
-            .is_some_and(|scope| scope.eq_ignore_ascii_case("commit"))
-            && let Some(commit) = self.auto_resolve_commit_sha() {
+        if let Some(commit) = self.auto_resolve_commit_sha() {
                 let short_sha: String = commit.chars().take(7).collect();
                 preface.push_str("\n\nCommit under review: ");
                 preface.push_str(&commit);
@@ -359,11 +351,7 @@ impl ChatWidget<'_> {
             preface.push_str(fix);
         }
         preface.push_str("\n\nReturn JSON: {\"status\": \"...\", \"rationale\": \"optional explanation\"}.");
-        if self
-            .auto_resolve_scope()
-            .as_deref()
-            .is_some_and(|scope| scope.eq_ignore_ascii_case("commit"))
-            && let Some(commit) = self.auto_resolve_commit_sha() {
+        if let Some(commit) = self.auto_resolve_commit_sha() {
                 let short_sha: String = commit.chars().take(7).collect();
                 preface.push_str("\n\nCommit under review: ");
                 preface.push_str(&commit);
@@ -419,29 +407,27 @@ impl ChatWidget<'_> {
         }
 
         let mut next_hint = state_snapshot.hint.clone();
-        let mut next_metadata = state_snapshot.metadata.clone();
+        let mut next_target = state_snapshot.target.clone();
 
-        if next_metadata
-            .as_ref()
-            .and_then(|meta| meta.scope.as_ref())
-            .is_some_and(|scope| scope.eq_ignore_ascii_case("commit"))
-            && let Some(new_commit) = self.current_head_commit_sha() {
-                let short_sha: String = new_commit.chars().take(7).collect();
-                let subject = self.commit_subject_for(&new_commit);
-                base_prompt = if let Some(subject) = subject {
-                    format!(
-                        "Review the code changes introduced by commit {new_commit} (\"{subject}\"). Provide prioritized, actionable findings."
-                    )
-                } else {
-                    format!(
-                        "Review the code changes introduced by commit {new_commit}. Provide prioritized, actionable findings."
-                    )
-                };
-                next_hint = format!("commit {short_sha}");
-                if let Some(meta) = next_metadata.as_mut() {
-                    meta.commit = Some(new_commit);
-                }
-            }
+        if matches!(next_target, ReviewTarget::Commit { .. })
+            && let Some(new_commit) = self.current_head_commit_sha()
+        {
+            let short_sha: String = new_commit.chars().take(7).collect();
+            let subject = self.commit_subject_for(&new_commit);
+            base_prompt = match subject.as_deref() {
+                Some(subject) => format!(
+                    "Review the code changes introduced by commit {new_commit} (\"{subject}\"). Provide prioritized, actionable findings."
+                ),
+                None => format!(
+                    "Review the code changes introduced by commit {new_commit}. Provide prioritized, actionable findings."
+                ),
+            };
+            next_hint = format!("commit {short_sha}");
+            next_target = ReviewTarget::Commit {
+                sha: new_commit,
+                title: subject,
+            };
+        }
 
         let mut continued_prompt = base_prompt.clone();
         if let Some(last_review) = state_snapshot.last_review.as_ref() {
@@ -451,35 +437,26 @@ impl ChatWidget<'_> {
                 continued_prompt.push_str(&recap);
             }
         }
-        if state_snapshot
-            .metadata
-            .as_ref()
-            .and_then(|meta| meta.scope.as_ref())
-            .is_some_and(|scope| scope.eq_ignore_ascii_case("commit"))
-            && let Some(commit) = state_snapshot
-                .metadata
-                .as_ref()
-                .and_then(|meta| meta.commit.clone())
-                && let Some(true) = self.worktree_has_uncommitted_changes() {
-                    continued_prompt.push_str("\n\nNote: there are uncommitted changes in the working tree since commit ");
-                    continued_prompt.push_str(&commit);
-                    continued_prompt.push_str(
-                        ". Ensure the review covers the updated workspace rather than only the original commit snapshot.",
-                    );
-                }
+        if let ReviewTarget::Commit { sha, .. } = &state_snapshot.target
+            && let Some(true) = self.worktree_has_uncommitted_changes()
+        {
+            continued_prompt.push_str(
+                "\n\nNote: there are uncommitted changes in the working tree since commit ",
+            );
+            continued_prompt.push_str(sha);
+            continued_prompt.push_str(
+                ". Ensure the review covers the updated workspace rather than only the original commit snapshot.",
+            );
+        }
         continued_prompt.push_str("\n\n");
         continued_prompt.push_str(AUTO_RESOLVE_REVIEW_FOLLOWUP);
-        self.begin_review(
-            continued_prompt,
-            next_hint.clone(),
-            Some(prep_label),
-            next_metadata.clone(),
-        );
+        let hint = (!next_hint.trim().is_empty()).then(|| next_hint.clone());
+        self.begin_review(next_target.clone(), continued_prompt, hint, Some(prep_label));
         if let Some(state) = self.auto_resolve_state.as_mut() {
             state.phase = AutoResolvePhase::WaitingForReview;
+            state.target = next_target;
             state.prompt = base_prompt;
             state.hint = next_hint;
-            state.metadata = next_metadata;
             state.last_review = None;
             state.last_fix_message = None;
         }
@@ -671,10 +648,6 @@ impl ChatWidget<'_> {
         let workspace_prompt = "Review the current workspace changes (staged, unstaged, and untracked files) and highlight bugs, regressions, risky patterns, and missing tests before merge.".to_string();
         let workspace_hint = "current workspace changes".to_string();
         let workspace_preparation = "Preparing code review for current changes".to_string();
-        let workspace_metadata = Some(ReviewContextMetadata {
-            scope: Some("workspace".to_string()),
-            ..Default::default()
-        });
         let workspace_auto_resolve = self.config.tui.review_auto_resolve;
         items.push(SelectionItem {
             name: "Review uncommitted changes".to_string(),
@@ -684,13 +657,12 @@ impl ChatWidget<'_> {
                 let prompt = workspace_prompt;
                 let hint = workspace_hint;
                 let preparation = workspace_preparation;
-                let metadata = workspace_metadata;
                 move |tx: &crate::app_event_sender::AppEventSender| {
                     tx.send(crate::app_event::AppEvent::RunReviewWithScope {
+                        target: ReviewTarget::UncommittedChanges,
                         prompt: prompt.clone(),
-                        hint: hint.clone(),
+                        hint: Some(hint.clone()),
                         preparation_label: Some(preparation.clone()),
-                        metadata: metadata.clone(),
                         auto_resolve: workspace_auto_resolve,
                     });
                 }
@@ -1898,11 +1870,10 @@ impl ChatWidget<'_> {
             let prompt_closure = prompt.clone();
             let hint_closure = hint.clone();
             let prep_closure = preparation.clone();
-            let metadata_option = Some(ReviewContextMetadata {
-                scope: Some("commit".to_string()),
-                commit: Some(sha.clone()),
-                ..Default::default()
-            });
+            let target_closure = ReviewTarget::Commit {
+                sha: sha.clone(),
+                title: (!subject.is_empty()).then_some(subject.clone()),
+            };
             let auto_flag = auto_resolve;
             items.push(SelectionItem {
                 name: title,
@@ -1910,10 +1881,10 @@ impl ChatWidget<'_> {
                 is_current: false,
                 actions: vec![Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
                     tx.send(crate::app_event::AppEvent::RunReviewWithScope {
+                        target: target_closure.clone(),
                         prompt: prompt_closure.clone(),
-                        hint: hint_closure.clone(),
+                        hint: Some(hint_closure.clone()),
                         preparation_label: Some(prep_closure.clone()),
-                        metadata: metadata_option.clone(),
                         auto_resolve: auto_flag,
                     });
                 })],
@@ -2007,12 +1978,8 @@ impl ChatWidget<'_> {
             let prompt_closure = prompt.clone();
             let hint_closure = hint.clone();
             let prep_closure = preparation.clone();
-            let metadata_option = Some(ReviewContextMetadata {
-                scope: Some("branch_diff".to_string()),
-                base_branch: Some(branch_trimmed.to_string()),
-                current_branch: current_trimmed.clone(),
-                ..Default::default()
-            });
+            let target_closure =
+                ReviewTarget::BaseBranch { branch: branch_trimmed.to_string() };
             let auto_flag = auto_resolve;
             items.push(SelectionItem {
                 name: title,
@@ -2020,10 +1987,10 @@ impl ChatWidget<'_> {
                 is_current: false,
                 actions: vec![Box::new(move |tx: &crate::app_event_sender::AppEventSender| {
                     tx.send(crate::app_event::AppEvent::RunReviewWithScope {
+                        target: target_closure.clone(),
                         prompt: prompt_closure.clone(),
-                        hint: hint_closure.clone(),
+                        hint: Some(hint_closure.clone()),
                         preparation_label: Some(prep_closure.clone()),
-                        metadata: metadata_option.clone(),
                         auto_resolve: auto_flag,
                     });
                 })],
@@ -2079,31 +2046,31 @@ impl ChatWidget<'_> {
                     let tx = self.app_event_tx.clone();
                     let auto_flag = auto_resolve;
                     tokio::spawn(async move {
-                    let branch_metadata =
-                        code_core::git_worktree::load_branch_metadata(&worktree_cwd);
-                    let metadata_base = branch_metadata.as_ref().and_then(|meta| {
-                        meta.remote_ref.clone().or_else(|| {
-                            if let (Some(remote_name), Some(base_branch)) =
-                                (meta.remote_name.clone(), meta.base_branch.clone())
-                            {
-                                Some(format!("{remote_name}/{base_branch}"))
-                            } else {
-                                None
-                            }
-                        })
-                        .or_else(|| meta.base_branch.clone())
-                    });
-                    let default_branch = match metadata_base {
-                        Some(value) => Some(value),
-                        None => code_core::git_worktree::detect_default_branch(&git_root)
+                        let branch_metadata =
+                            code_core::git_worktree::load_branch_metadata(&worktree_cwd);
+                        let metadata_base = branch_metadata.as_ref().and_then(|meta| {
+                            meta.remote_ref.clone().or_else(|| {
+                                if let (Some(remote_name), Some(base_branch)) =
+                                    (meta.remote_name.clone(), meta.base_branch.clone())
+                                {
+                                    Some(format!("{remote_name}/{base_branch}"))
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| meta.base_branch.clone())
+                        });
+                        let default_branch = match metadata_base {
+                            Some(value) => Some(value),
+                            None => code_core::git_worktree::detect_default_branch(&git_root)
+                                .await
+                                .map(|name| name.trim().to_string())
+                                .filter(|name| !name.is_empty()),
+                        };
+                        let current_branch = code_core::git_info::current_branch_name(&worktree_cwd)
                             .await
                             .map(|name| name.trim().to_string())
-                            .filter(|name| !name.is_empty()),
-                    };
-                    let current_branch = code_core::git_info::current_branch_name(&worktree_cwd)
-                        .await
-                        .map(|name| name.trim().to_string())
-                        .filter(|name| !name.is_empty());
+                            .filter(|name| !name.is_empty());
 
                         if let (Some(base_branch), Some(current_branch)) =
                             (default_branch, current_branch)
@@ -2111,95 +2078,88 @@ impl ChatWidget<'_> {
                                 let prompt = format!(
                                     "Review the code changes between the current branch '{current_branch}' and '{base_branch}'. Identify the intent of the changes in '{current_branch}' and ensure no obvious gaps remain. Find all geniune bugs or regressions which need to be addressed before merging. Return ALL issues which need to be addressed, not just the first one you find."
                                 );
-                                let hint = format!("against {base_branch}");
+                                let hint = Some(format!("against {base_branch}"));
                                 let preparation_label =
                                     Some(format!("Preparing code review against {base_branch}"));
-                                let metadata = Some(ReviewContextMetadata {
-                                    scope: Some("branch_diff".to_string()),
-                                    base_branch: Some(base_branch),
-                                    current_branch: Some(current_branch),
-                                    ..Default::default()
-                                });
+                                let target = ReviewTarget::Custom { instructions: prompt.clone() };
                                 tx.send(crate::app_event::AppEvent::RunReviewWithScope {
+                                    target,
                                     prompt,
                                     hint,
                                     preparation_label,
-                                    metadata,
                                     auto_resolve: auto_flag,
                                 });
                                 return;
                             }
 
+                        let prompt = "Review the current workspace changes and highlight bugs, regressions, risky patterns, and missing tests before merge.".to_string();
                         tx.send(crate::app_event::AppEvent::RunReviewWithScope {
-                            prompt: "Review the current workspace changes and highlight bugs, regressions, risky patterns, and missing tests before merge.".to_string(),
-                            hint: "current workspace changes".to_string(),
+                            target: ReviewTarget::Custom { instructions: prompt.clone() },
+                            prompt,
+                            hint: Some("current workspace changes".to_string()),
                             preparation_label: Some("Preparing code review request...".to_string()),
-                            metadata: Some(ReviewContextMetadata {
-                                scope: Some("workspace".to_string()),
-                                ..Default::default()
-                            }),
                             auto_resolve: auto_flag,
                         });
                     });
                     return;
                 }
 
-            let metadata = ReviewContextMetadata {
-                scope: Some("workspace".to_string()),
-                ..Default::default()
-            };
+            let prompt = "Review the current workspace changes and highlight bugs, regressions, risky patterns, and missing tests before merge.".to_string();
             self.start_review_with_scope(
-                "Review the current workspace changes and highlight bugs, regressions, risky patterns, and missing tests before merge.".to_string(),
-                "current workspace changes".to_string(),
+                ReviewTarget::Custom { instructions: prompt.clone() },
+                prompt,
+                Some("current workspace changes".to_string()),
                 Some("Preparing code review request...".to_string()),
-                Some(metadata),
                 auto_resolve,
             );
         } else {
             let value = trimmed.to_string();
             let preparation = format!("Preparing code review for {value}");
-            let metadata = ReviewContextMetadata {
-                scope: Some("custom".to_string()),
-                ..Default::default()
-            };
-            self.start_review_with_scope(value.clone(), value, Some(preparation), Some(metadata), auto_resolve);
+            self.start_review_with_scope(
+                ReviewTarget::Custom { instructions: value.clone() },
+                value.clone(),
+                Some(value),
+                Some(preparation),
+                auto_resolve,
+            );
         }
     }
 
     pub(crate) fn start_review_with_scope(
         &mut self,
+        target: ReviewTarget,
         prompt: String,
-        hint: String,
+        hint: Option<String>,
         preparation_label: Option<String>,
-        metadata: Option<ReviewContextMetadata>,
         auto_resolve: bool,
     ) {
         if auto_resolve {
             let max_re_reviews = self.configured_auto_resolve_re_reviews();
             self.auto_resolve_state = Some(AutoResolveState::new_with_limit(
+                target.clone(),
                 prompt.clone(),
-                hint.clone(),
-                metadata.clone(),
+                hint.clone().unwrap_or_default(),
+                None,
                 max_re_reviews,
             ));
         } else {
             self.auto_resolve_state = None;
         }
 
-        self.begin_review(prompt, hint, preparation_label, metadata);
+        self.begin_review(target, prompt, hint, preparation_label);
     }
 
     pub(super) fn begin_review(
         &mut self,
+        target: ReviewTarget,
         prompt: String,
-        hint: String,
+        hint: Option<String>,
         preparation_label: Option<String>,
-        metadata: Option<ReviewContextMetadata>,
     ) {
         self.active_review_hint = None;
         self.active_review_prompt = None;
 
-        let trimmed_hint = hint.trim();
+        let trimmed_hint = hint.as_deref().unwrap_or("").trim();
         let preparation_notice = preparation_label.unwrap_or_else(|| {
             if trimmed_hint.is_empty() {
                 "Preparing code review request...".to_string()
@@ -2212,9 +2172,9 @@ impl ChatWidget<'_> {
         self.request_redraw();
 
         let review_request = ReviewRequest {
+            target,
             prompt,
             user_facing_hint: hint,
-            metadata,
         };
         match try_acquire_lock("review", &self.config.cwd) {
             Ok(Some(guard)) => {

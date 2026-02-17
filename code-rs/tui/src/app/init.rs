@@ -64,16 +64,8 @@ impl App<'_> {
             let remote_using_chatgpt_hint = config.using_chatgpt_auth;
             if !crate::chatwidget::is_test_mode() {
                 tokio::spawn(async move {
-                    let auth_mode = remote_auth_manager
-                        .auth()
-                        .map(|auth| auth.mode)
-                        .or(Some(if remote_using_chatgpt_hint {
-                            code_protocol::mcp_protocol::AuthMode::ChatGPT
-                        } else {
-                            code_protocol::mcp_protocol::AuthMode::ApiKey
-                        }));
                     let remote_manager = code_core::remote_models::RemoteModelsManager::new(
-                        remote_auth_manager,
+                        remote_auth_manager.clone(),
                         remote_provider,
                         remote_code_home,
                     );
@@ -83,9 +75,27 @@ impl App<'_> {
                         return;
                     }
 
-                    let presets = code_common::model_presets::builtin_model_presets(auth_mode);
-                    let presets =
-                        crate::remote_model_presets::merge_remote_models(remote_models, presets);
+                    let auth_mode = remote_auth_manager
+                        .auth()
+                        .map(|auth| auth.mode)
+                        .or_else(|| {
+                            if remote_using_chatgpt_hint {
+                                Some(AuthMode::ChatGPT)
+                            } else {
+                                Some(AuthMode::ApiKey)
+                            }
+                        });
+                    let supports_pro_only_models = remote_auth_manager.supports_pro_only_models();
+                    let presets = code_common::model_presets::builtin_model_presets(
+                        auth_mode,
+                        supports_pro_only_models,
+                    );
+                    let presets = crate::remote_model_presets::merge_remote_models(
+                        remote_models,
+                        presets,
+                        auth_mode,
+                        supports_pro_only_models,
+                    );
                     let default_model = remote_manager.default_model_slug(auth_mode).await;
                     remote_tx.send(AppEvent::ModelPresetsUpdated {
                         presets,

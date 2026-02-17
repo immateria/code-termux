@@ -1,3 +1,4 @@
+use code_core::config_types::AutoDriveModelRoutingEntry;
 use code_core::config_types::ReasoningEffort;
 use code_core::config_types::ShellConfig;
 use code_core::config_types::TextVerbosity;
@@ -8,7 +9,7 @@ use code_core::protocol::ValidationGroup;
 use code_core::protocol::ApprovedCommandMatchKind;
 use code_core::protocol::TokenUsage;
 use code_core::git_info::CommitLogEntry;
-use code_core::protocol::ReviewContextMetadata;
+use code_protocol::protocol::ReviewTarget;
 use code_file_search::FileMatch;
 use code_common::model_presets::ModelPreset;
 use crossterm::event::KeyEvent;
@@ -240,6 +241,8 @@ pub(crate) enum AppEvent {
         agents_enabled: bool,
         cross_check_enabled: bool,
         qa_automation_enabled: bool,
+        model_routing_enabled: bool,
+        model_routing_entries: Vec<AutoDriveModelRoutingEntry>,
         continue_mode: AutoContinueMode,
     },
 
@@ -427,10 +430,10 @@ pub(crate) enum AppEvent {
 
     /// Run a review with an explicit prompt/hint pair (used by TUI selections)
     RunReviewWithScope {
+        target: ReviewTarget,
         prompt: String,
-        hint: String,
+        hint: Option<String>,
         preparation_label: Option<String>,
-        metadata: Option<ReviewContextMetadata>,
         auto_resolve: bool,
     },
 

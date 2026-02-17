@@ -60,7 +60,6 @@ use code_core::account_usage::{
 use code_core::auth_accounts::{self, StoredAccount};
 use code_login::AuthManager;
 use code_login::AuthMode;
-use code_protocol::mcp_protocol::AuthMode as McpAuthMode;
 use code_protocol::dynamic_tools::DynamicToolResponse;
 use code_protocol::num_format::format_with_separators;
 use code_core::split_command_and_args;
@@ -210,7 +209,7 @@ use code_core::protocol::SessionConfiguredEvent;
 // MCP tool call handlers moved into chatwidget::tools
 use code_core::protocol::Op;
 use code_core::protocol::ReviewOutputEvent;
-use code_core::protocol::{ReviewContextMetadata, ReviewRequest};
+use code_core::protocol::ReviewRequest;
 use code_core::protocol::PatchApplyBeginEvent;
 use code_core::protocol::PatchApplyEndEvent;
 use code_core::protocol::TaskCompleteEvent;
@@ -1495,6 +1494,7 @@ impl ChatWidget<'_> {
                 }),
                 UpdatePlanArgs {
                     name: Some("Demo Scroll Plan".to_string()),
+                    explanation: None,
                     plan: vec![
                         PlanItemArg {
                             step: "Create reproducible builds".to_string(),
@@ -1542,6 +1542,7 @@ impl ChatWidget<'_> {
                 }),
                 UpdatePlanArgs {
                     name: Some("Release Gate Plan".to_string()),
+                    explanation: None,
                     plan: vec![
                         PlanItemArg {
                             step: "Finalize changelog".to_string(),
@@ -1723,6 +1724,8 @@ impl ChatWidget<'_> {
                 &self.config,
                 &self.total_token_usage,
                 &self.last_token_usage,
+                None,
+                None,
             ));
 
             self.history_push_plain_state(history_cell::new_prompts_output());
@@ -2019,6 +2022,8 @@ impl ChatWidget<'_> {
             &self.config,
             &self.total_token_usage,
             &self.last_token_usage,
+            None,
+            None,
         ));
     }
 
@@ -2200,7 +2205,7 @@ impl ChatWidget<'_> {
     fn rate_limit_display_config_for_account(
         account: Option<&StoredAccount>,
     ) -> RateLimitDisplayConfig {
-        if matches!(account.map(|acc| acc.mode), Some(McpAuthMode::ApiKey)) {
+        if matches!(account.map(|acc| acc.mode), Some(AuthMode::ApiKey)) {
             RateLimitDisplayConfig {
                 show_usage_sections: false,
                 show_chart: false,
@@ -2914,6 +2919,13 @@ impl ChatWidget<'_> {
         let agents = self.auto_state.subagents_enabled;
         let cross = self.auto_state.cross_check_enabled;
         let qa = self.auto_state.qa_automation_enabled;
+        let model_routing_enabled = self.config.auto_drive.model_routing_enabled;
+        let model_routing_entries = self.config.auto_drive.model_routing_entries.clone();
+        let routing_model_options = self
+            .available_model_presets()
+            .into_iter()
+            .map(|preset| preset.model)
+            .collect();
         let mode = self.auto_state.continue_mode;
         AutoDriveSettingsView::new(AutoDriveSettingsInit {
             app_event_tx: self.app_event_tx.clone(),
@@ -2924,6 +2936,9 @@ impl ChatWidget<'_> {
             agents_enabled: agents,
             cross_check_enabled: cross,
             qa_automation_enabled: qa,
+            model_routing_enabled,
+            model_routing_entries,
+            routing_model_options,
             continue_mode: mode,
         })
     }

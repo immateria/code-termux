@@ -138,7 +138,7 @@ impl BottomPaneView<'_> for ResumeSelectionView {
         // clamped rows, spacer (+1), footer (+1)
         let rows = self.rows.len().clamp(1, RESUME_POPUP_ROWS) as u16;
         let subtitle = if self.subtitle.is_empty() { 0 } else { 1 };
-        2 + subtitle + 1 + rows + 1 + 1
+        2 + subtitle + 1 + rows + 1 + 2
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -240,5 +240,65 @@ impl BottomPaneView<'_> for ResumeSelectionView {
         Paragraph::new(footer_line)
             .style(Style::default().bg(crate::colors::background()).fg(crate::colors::text()))
             .render(footer, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_event::AppEvent;
+    use crate::app_event_sender::AppEventSender;
+    use ratatui::layout::Rect;
+    use std::sync::mpsc;
+
+    #[test]
+    fn resume_selection_shows_max_rows_for_capacity() {
+        let rows = (0..14)
+            .map(|i| ResumeRow {
+                modified: "m".to_string(),
+                created: "c".to_string(),
+                user_msgs: "1".to_string(),
+                branch: "main".to_string(),
+                last_user_message: format!("row-{i}"),
+                path: std::path::PathBuf::from(format!("/tmp/sess-{i}")),
+            })
+            .collect();
+
+        let (tx, _rx) = mpsc::channel::<AppEvent>();
+        let view = ResumeSelectionView::new(
+            "Resume".to_string(),
+            String::new(),
+            rows,
+            AppEventSender::new(tx),
+        );
+
+        let width = 120;
+        let height = view.desired_height(width);
+        let mut buf = ratatui::buffer::Buffer::empty(Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        });
+
+        view.render(Rect { x: 0, y: 0, width, height }, &mut buf);
+
+        let inner_width = width.saturating_sub(2);
+        let mut row_lines = 0;
+        for y in 1..height.saturating_sub(1) {
+            let line: String = (0..inner_width)
+                .map(|x| {
+                    buf[(x.saturating_add(1), y)]
+                        .symbol()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .concat();
+            if line.contains("row-") {
+                row_lines += 1;
+            }
+        }
+
+        assert_eq!(row_lines, 14);
     }
 }

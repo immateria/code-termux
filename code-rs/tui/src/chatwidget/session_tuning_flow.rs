@@ -5,12 +5,19 @@ impl ChatWidget<'_> {
         if let Some(presets) = self.remote_model_presets.as_ref() {
             return presets.clone();
         }
-        let auth_mode = if self.config.using_chatgpt_auth {
-            Some(McpAuthMode::ChatGPT)
-        } else {
-            Some(McpAuthMode::ApiKey)
-        };
-        builtin_model_presets(auth_mode)
+        let auth_mode = self
+            .auth_manager
+            .auth()
+            .map(|auth| auth.mode)
+            .or_else(|| {
+                if self.config.using_chatgpt_auth {
+                    Some(AuthMode::ChatGPT)
+                } else {
+                    Some(AuthMode::ApiKey)
+                }
+            });
+        let supports_pro_only_models = self.auth_manager.supports_pro_only_models();
+        builtin_model_presets(auth_mode, supports_pro_only_models)
     }
 
     pub(crate) fn update_model_presets(

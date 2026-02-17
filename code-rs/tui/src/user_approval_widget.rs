@@ -308,6 +308,7 @@ impl UserApprovalWidget<'_> {
         let op = match &self.approval_request {
             ApprovalRequest::Exec { id, .. } => Op::ExecApproval {
                 id: id.clone(),
+                turn_id: None,
                 decision,
             },
             ApprovalRequest::ApplyPatch { id, .. } => Op::PatchApproval {
@@ -558,4 +559,3 @@ fn hotkey_suffix(key: KeyCode) -> String {
         _ => String::new(),
     }
 }
-

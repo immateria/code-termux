@@ -98,6 +98,8 @@ async fn run_llm_request(
             content: vec![ContentItem::InputText {
                 text: args.developer.clone(),
             }],
+            end_turn: None,
+            phase: None,
         },
         ResponseItem::Message {
             id: None,
@@ -105,6 +107,8 @@ async fn run_llm_request(
             content: vec![ContentItem::InputText {
                 text: args.message.clone(),
             }],
+            end_turn: None,
+            phase: None,
         },
     ];
 

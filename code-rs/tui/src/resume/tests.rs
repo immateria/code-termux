@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 
 use code_core::SessionCatalog;
-use code_protocol::ConversationId;
+use code_protocol::ThreadId;
 use code_protocol::protocol::{
     EventMsg as ProtoEventMsg,
     RecordedEvent,
@@ -26,13 +26,16 @@ fn write_meta_only_session(path: &Path, cwd: &Path, session_id: Uuid) {
     let mut writer = BufWriter::new(file);
 
     let session_meta = SessionMeta {
-        id: ConversationId::from(session_id),
+        id: ThreadId::from_string(&session_id.to_string()).unwrap(),
+        forked_from_id: None,
         timestamp: "2025-10-06T12:00:00.000Z".to_string(),
         cwd: cwd.to_path_buf(),
         originator: "resume-test".to_string(),
         cli_version: "0.0.0-test".to_string(),
-        instructions: None,
         source: SessionSource::Cli,
+        model_provider: None,
+        base_instructions: None,
+        dynamic_tools: None,
     };
 
     let meta_line = RolloutLine {
@@ -52,13 +55,16 @@ fn write_event_only_session(path: &Path, cwd: &Path) {
     let mut writer = BufWriter::new(file);
 
     let session_meta = SessionMeta {
-        id: ConversationId::from(Uuid::from_u128(0xDEAD_BEEF_u128)),
+        id: ThreadId::from_string(&Uuid::from_u128(0xDEAD_BEEF_u128).to_string()).unwrap(),
         timestamp: "2025-10-06T12:00:00.000Z".to_string(),
         cwd: cwd.to_path_buf(),
         originator: "resume-test".to_string(),
         cli_version: "0.0.0-test".to_string(),
-        instructions: None,
         source: SessionSource::Cli,
+        model_provider: None,
+        base_instructions: None,
+        dynamic_tools: None,
+        forked_from_id: None,
     };
 
     let meta_line = RolloutLine {
@@ -77,8 +83,9 @@ fn write_event_only_session(path: &Path, cwd: &Path) {
         order: None,
         msg: ProtoEventMsg::UserMessage(UserMessageEvent {
             message: "restore me".to_string(),
-            kind: None,
             images: None,
+            local_images: vec![],
+            text_elements: vec![],
         }),
     };
     let event_line = RolloutLine {

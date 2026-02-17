@@ -79,13 +79,24 @@ impl App<'_> {
             let auth_mode = remote_auth_manager
                 .auth()
                 .map(|auth| auth.mode)
-                .or(Some(if remote_using_chatgpt_hint {
-                    code_protocol::mcp_protocol::AuthMode::ChatGPT
-                } else {
-                    code_protocol::mcp_protocol::AuthMode::ApiKey
-                }));
-            let presets = code_common::model_presets::builtin_model_presets(auth_mode);
-            let presets = crate::remote_model_presets::merge_remote_models(remote_models, presets);
+                .or_else(|| {
+                    if remote_using_chatgpt_hint {
+                        Some(AuthMode::ChatGPT)
+                    } else {
+                        Some(AuthMode::ApiKey)
+                    }
+                });
+            let supports_pro_only_models = remote_auth_manager.supports_pro_only_models();
+            let presets = code_common::model_presets::builtin_model_presets(
+                auth_mode,
+                supports_pro_only_models,
+            );
+            let presets = crate::remote_model_presets::merge_remote_models(
+                remote_models,
+                presets,
+                auth_mode,
+                supports_pro_only_models,
+            );
             let default_model = remote_manager.default_model_slug(auth_mode).await;
             remote_tx.send(AppEvent::ModelPresetsUpdated {
                 presets,
@@ -419,35 +430,14 @@ impl App<'_> {
                                 }
                             // Otherwise fall through
                         }
-                        // Fallback: attempt clipboard image paste on common shortcuts.
-                        // Many terminals (e.g., iTerm2) do not emit Event::Paste for raw-image
-                        // clipboards. When the user presses paste shortcuts, try an image read
-                        // by dispatching a paste with an empty string. The composer will then
-                        // attempt `paste_image_to_temp_png()` and no-op if no image exists.
-                        KeyEvent {
-                            code: KeyCode::Char('v'),
-                            modifiers: crossterm::event::KeyModifiers::CONTROL,
-                            kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                            ..
-                        } => {
-                            self.dispatch_paste_event(String::new());
-                        }
-                        KeyEvent {
-                            code: KeyCode::Char('v'),
-                            modifiers: m,
-                            kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                            ..
-                        } if m.contains(crossterm::event::KeyModifiers::CONTROL)
-                            && m.contains(crossterm::event::KeyModifiers::SHIFT) =>
-                        {
-                            self.dispatch_paste_event(String::new());
-                        }
-                        KeyEvent {
-                            code: KeyCode::Insert,
-                            modifiers: crossterm::event::KeyModifiers::SHIFT,
-                            kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                            ..
-                        } => {
+                        // Explicit image paste shortcut fallback.
+                        //
+                        // Standard text paste shortcuts (Ctrl/Cmd+V, Ctrl+Shift+V,
+                        // Shift+Insert) must flow through terminal paste events to avoid
+                        // truncating text on terminals that also emit partial key streams.
+                        // Keep an opt-in image path on Ctrl+Alt+V for environments that
+                        // don't emit Event::Paste for image clipboards.
+                        key_event if is_image_clipboard_paste_shortcut(&key_event) => {
                             self.dispatch_paste_event(String::new());
                         }
                         KeyEvent {
@@ -908,6 +898,8 @@ impl App<'_> {
                     agents_enabled,
                     cross_check_enabled,
                     qa_automation_enabled,
+                    model_routing_enabled,
+                    model_routing_entries,
                     continue_mode,
                 } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
@@ -916,6 +908,8 @@ impl App<'_> {
                             agents_enabled,
                             cross_check_enabled,
                             qa_automation_enabled,
+                            model_routing_enabled,
+                            model_routing_entries,
                             continue_mode,
                         );
                     }
@@ -1750,18 +1744,18 @@ impl App<'_> {
                     }
                 }
                 AppEvent::RunReviewWithScope {
+                    target,
                     prompt,
                     hint,
                     preparation_label,
-                    metadata,
                     auto_resolve,
                 } => {
                     if let AppState::Chat { widget } = &mut self.app_state {
                         widget.start_review_with_scope(
+                            target,
                             prompt,
                             hint,
                             preparation_label,
-                            metadata,
                             auto_resolve,
                         );
                     }
@@ -2491,6 +2485,24 @@ impl App<'_> {
 
 }
 
+fn is_image_clipboard_paste_shortcut(key_event: &KeyEvent) -> bool {
+    if !matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return false;
+    }
+
+    match key_event {
+        KeyEvent {
+            code: KeyCode::Char('v' | 'V'),
+            modifiers,
+            ..
+        } => {
+            modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                && modifiers.contains(crossterm::event::KeyModifiers::ALT)
+        }
+        _ => false,
+    }
+}
+
 fn next_event_priority_impl(
     high_rx: &Receiver<AppEvent>,
     bulk_rx: &Receiver<AppEvent>,
@@ -2570,5 +2582,28 @@ mod next_event_priority_tests {
             saw_bulk,
             "bulk event should not be starved behind continuous high-priority events"
         );
+    }
+
+    #[test]
+    fn image_clipboard_fallback_shortcut_is_ctrl_alt_v_only() {
+        assert!(is_image_clipboard_paste_shortcut(&KeyEvent::new(
+            KeyCode::Char('v'),
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::ALT,
+        )));
+
+        assert!(!is_image_clipboard_paste_shortcut(&KeyEvent::new(
+            KeyCode::Char('v'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )));
+
+        assert!(!is_image_clipboard_paste_shortcut(&KeyEvent::new(
+            KeyCode::Char('v'),
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+        )));
+
+        assert!(!is_image_clipboard_paste_shortcut(&KeyEvent::new(
+            KeyCode::Insert,
+            crossterm::event::KeyModifiers::SHIFT,
+        )));
     }
 }

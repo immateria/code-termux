@@ -33,6 +33,7 @@ use code_otel::otel_event_manager::{
 };
 use code_protocol::config_types::ReasoningEffort as ProtoReasoningEffort;
 use code_protocol::config_types::ReasoningSummary as ProtoReasoningSummary;
+use code_utils_absolute_path::AbsolutePathBuf as ProtoAbsolutePathBuf;
 use code_protocol::protocol::AskForApproval as ProtoAskForApproval;
 use code_protocol::protocol::ReviewDecision as ProtoReviewDecision;
 use code_protocol::protocol::SandboxPolicy as ProtoSandboxPolicy;
@@ -49,7 +50,7 @@ use crate::config_types::ClientTools;
 use code_protocol::protocol::TurnAbortReason;
 use code_protocol::protocol::TurnAbortedEvent;
 use futures::prelude::*;
-use mcp_types::CallToolResult;
+use code_protocol::mcp::CallToolResult;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::oneshot;
@@ -70,10 +71,14 @@ use crate::git_worktree;
 use crate::protocol::ApprovedCommandMatchKind;
 use crate::protocol::WebSearchBeginEvent;
 use crate::protocol::WebSearchCompleteEvent;
-use code_protocol::mcp_protocol::AuthMode;
 use crate::account_usage;
 use crate::auth_accounts;
-use crate::agent_defaults::{agent_model_spec, default_agent_configs, enabled_agent_model_specs};
+use crate::agent_defaults::{
+    agent_model_spec,
+    default_agent_configs,
+    enabled_agent_model_specs_for_auth,
+    filter_agent_model_names_for_auth,
+};
 use code_protocol::models::WebSearchAction;
 use code_protocol::protocol::RolloutItem;
 use shlex::split as shlex_split;
@@ -193,13 +198,28 @@ fn to_proto_sandbox_policy(policy: SandboxPolicy) -> ProtoSandboxPolicy {
             exclude_tmpdir_env_var,
             exclude_slash_tmp,
             allow_git_writes,
-        } => ProtoSandboxPolicy::WorkspaceWrite {
-            writable_roots,
-            network_access,
-            exclude_tmpdir_env_var,
-            exclude_slash_tmp,
-            allow_git_writes,
-        },
+        } => {
+            let writable_roots = writable_roots
+                .into_iter()
+                .filter_map(|root| match ProtoAbsolutePathBuf::from_absolute_path(&root) {
+                    Ok(abs) => Some(abs),
+                    Err(err) => {
+                        warn!(
+                            "Ignoring invalid writable root {} for sandbox policy: {err}",
+                            root.display()
+                        );
+                        None
+                    }
+                })
+                .collect();
+            ProtoSandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+                allow_git_writes,
+            }
+        }
     }
 }
 
@@ -339,12 +359,14 @@ fn convert_call_tool_result_to_function_call_output_payload(
 ) -> FunctionCallOutputPayload {
     match result {
         Ok(ok) => FunctionCallOutputPayload {
-            content: serde_json::to_string(ok)
-                .unwrap_or_else(|e| format!("JSON serialization error: {e}")),
+            body: code_protocol::models::FunctionCallOutputBody::Text(
+                serde_json::to_string(ok)
+                    .unwrap_or_else(|e| format!("JSON serialization error: {e}")),
+            ),
             success: Some(true),
         },
         Err(e) => FunctionCallOutputPayload {
-            content: format!("err: {e:?}"),
+            body: code_protocol::models::FunctionCallOutputBody::Text(format!("err: {e:?}")),
             success: Some(false),
         },
     }
@@ -457,8 +479,7 @@ fn maybe_time_budget_status_item(sess: &Session) -> Option<ResponseItem> {
     Some(ResponseItem::Message {
         id: Some(format!("run-budget-{}", sess.id)),
         role: "user".to_string(),
-        content: vec![ContentItem::InputText { text }],
-    })
+        content: vec![ContentItem::InputText { text }], end_turn: None, phase: None})
 }
 
 async fn build_turn_status_items(sess: &Session) -> Vec<ResponseItem> {
@@ -637,8 +658,7 @@ async fn build_turn_status_items_legacy(sess: &Session) -> Vec<ResponseItem> {
         jar.items.push(ResponseItem::Message {
             id: None,
             role: "user".to_string(),
-            content,
-        });
+            content, end_turn: None, phase: None});
     }
 
     if let Some(item) = maybe_time_budget_status_item(sess) {
@@ -686,8 +706,7 @@ async fn build_turn_status_items_v2(sess: &Session) -> Vec<ResponseItem> {
                 items.push(ResponseItem::Message {
                     id: Some(browser_stream_id),
                     role: "user".to_string(),
-                    content: vec![ContentItem::InputText { text: idle_text }],
-                });
+                    content: vec![ContentItem::InputText { text: idle_text }], end_turn: None, phase: None});
                 return items;
             } else {
                 let url = browser_manager
@@ -774,8 +793,7 @@ async fn build_turn_status_items_v2(sess: &Session) -> Vec<ResponseItem> {
                             role: "user".to_string(),
                             content: vec![ContentItem::InputImage {
                                 image_url: format!("data:{mime};base64,{encoded}"),
-                            }],
-                        });
+                            }], end_turn: None, phase: None});
                     }
                     Err(err) => warn!(
                         "env_ctx_v2: failed to read screenshot file {}: {err}",
@@ -809,6 +827,103 @@ fn should_include_browser_screenshot(
     } else {
         *last_info = Some((path.to_path_buf(), Vec::new(), Vec::new()));
         true
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codex::streaming::{process_rollout_env_item, TimelineReplayContext};
+    use code_protocol::models::ContentItem;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn screenshot_dedup_tracks_changes() {
+        let mut last = None;
+        let path = PathBuf::from("/tmp/a.png");
+        let hash_one = (vec![0xAAu8; 32], vec![0x55u8; 32]);
+        let hash_two = (vec![0xABu8; 32], vec![0x56u8; 32]);
+
+        assert!(should_include_browser_screenshot(&mut last, &path, Some(hash_one.clone())));
+        assert!(!should_include_browser_screenshot(&mut last, &path, Some(hash_one.clone())));
+        assert!(should_include_browser_screenshot(&mut last, &path, Some(hash_two)));
+    }
+
+    fn make_snapshot(cwd: &str) -> EnvironmentContextSnapshot {
+        EnvironmentContextSnapshot {
+            version: EnvironmentContextSnapshot::VERSION,
+            cwd: Some(cwd.to_string()),
+            approval_policy: None,
+            sandbox_mode: None,
+            network_access: None,
+            writable_roots: Vec::new(),
+            operating_system: None,
+            common_tools: Vec::new(),
+            shell: None,
+            git_branch: Some("main".to_string()),
+            reasoning_effort: None,
+        }
+    }
+
+    #[test]
+    fn timeline_rehydrate_round_trip() {
+        let baseline = make_snapshot("/repo");
+        let delta_snapshot = make_snapshot("/repo-updated");
+        let delta = delta_snapshot.diff_from(&baseline);
+
+        let baseline_item = baseline
+            .to_response_item()
+            .expect("serialize baseline snapshot");
+        let delta_item = delta
+            .to_response_item()
+            .expect("serialize delta snapshot");
+
+        let mut ctx = TimelineReplayContext::default();
+        process_rollout_env_item(&mut ctx, &baseline_item);
+        process_rollout_env_item(&mut ctx, &delta_item);
+
+        assert!(ctx.timeline.baseline().is_some());
+        assert_eq!(ctx.timeline.delta_count(), 1);
+        assert_eq!(ctx.next_sequence, 2);
+        assert!(ctx.last_snapshot.is_some());
+    }
+
+    #[test]
+    fn timeline_rehydrate_legacy_baseline() {
+        let legacy_item = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "== System Status ==\n cwd: /legacy\n branch: main".to_string(),
+            }], end_turn: None, phase: None};
+
+        let mut ctx = TimelineReplayContext::default();
+        process_rollout_env_item(&mut ctx, &legacy_item);
+
+        assert!(ctx.timeline.is_empty());
+        assert!(ctx.legacy_baseline.is_some());
+    }
+
+    #[test]
+    fn timeline_rehydrate_delta_gap_triggers_reset() {
+        let baseline = make_snapshot("/repo");
+        let baseline_item = baseline
+            .to_response_item()
+            .expect("serialize baseline snapshot");
+
+        let mut ctx = TimelineReplayContext::default();
+        process_rollout_env_item(&mut ctx, &baseline_item);
+
+        let mut delta = make_snapshot("/other").diff_from(&baseline);
+        delta.base_fingerprint = "mismatch".to_string();
+        let delta_item = delta
+            .to_response_item()
+            .expect("serialize delta snapshot");
+
+        process_rollout_env_item(&mut ctx, &delta_item);
+
+        assert!(ctx.timeline.is_empty());
+        assert!(ctx.last_snapshot.is_none());
+        assert_eq!(ctx.next_sequence, 1);
     }
 }
 use crate::agent_tool::AGENT_MANAGER;

@@ -1,4 +1,5 @@
 use super::*;
+use code_core::protocol::WarningEvent;
 
 mod custom_tool_events;
 mod stream_events;
@@ -10,6 +11,56 @@ mod runtime_events;
 type WaitHistoryUpdate = (HistoryId, Option<Duration>, Vec<(String, bool)>);
 
 impl ChatWidget<'_> {
+    fn mcp_tool_from_protocol(tool: code_protocol::mcp::Tool) -> mcp_types::Tool {
+        let code_protocol::mcp::Tool {
+            name,
+            title,
+            description,
+            input_schema,
+            output_schema,
+            annotations,
+            ..
+        } = tool;
+
+        let annotations = annotations.and_then(|value| match serde_json::from_value(value) {
+            Ok(annotations) => Some(annotations),
+            Err(err) => {
+                tracing::warn!("failed to parse annotations for MCP tool '{name}': {err}");
+                None
+            }
+        });
+
+        let input_schema = match serde_json::from_value::<mcp_types::ToolInputSchema>(input_schema)
+        {
+            Ok(schema) => schema,
+            Err(err) => {
+                tracing::warn!("failed to parse input schema for MCP tool '{name}': {err}");
+                mcp_types::ToolInputSchema {
+                    properties: None,
+                    required: None,
+                    r#type: "object".to_string(),
+                }
+            }
+        };
+
+        let output_schema = output_schema.and_then(|value| match serde_json::from_value(value) {
+            Ok(schema) => Some(schema),
+            Err(err) => {
+                tracing::warn!("failed to parse output schema for MCP tool '{name}': {err}");
+                None
+            }
+        });
+
+        mcp_types::Tool {
+            annotations,
+            description,
+            input_schema,
+            name,
+            output_schema,
+            title,
+        }
+    }
+
     pub(crate) fn handle_code_event(&mut self, event: Event) {
         tracing::debug!(
             "handle_code_event({})",
@@ -261,6 +312,10 @@ impl ChatWidget<'_> {
             EventMsg::Error(ErrorEvent { message }) => {
                 self.on_error(message);
             }
+            EventMsg::Warning(WarningEvent { message }) => {
+                self.history_push_plain_state(history_cell::new_warning_event(message));
+                self.request_redraw();
+            }
             EventMsg::PlanUpdate(update) => {
                 let (plan_title, plan_active) = {
                     let title = update
@@ -377,7 +432,11 @@ impl ChatWidget<'_> {
                 self.bottom_pane.set_custom_prompts(ev.custom_prompts);
             }
             EventMsg::McpListToolsResponse(ev) => {
-                self.mcp_tool_catalog_by_id = ev.tools;
+                self.mcp_tool_catalog_by_id = ev
+                    .tools
+                    .into_iter()
+                    .map(|(id, tool)| (id, Self::mcp_tool_from_protocol(tool)))
+                    .collect();
                 self.mcp_tools_by_server = ev.server_tools.unwrap_or_default();
                 self.mcp_disabled_tools_by_server =
                     ev.server_disabled_tools.unwrap_or_default();

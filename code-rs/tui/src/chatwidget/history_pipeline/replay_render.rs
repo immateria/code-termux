@@ -4,7 +4,7 @@ impl ChatWidget<'_> {
     /// Render a single recorded ResponseItem into history without executing tools
     pub(in super::super) fn render_replay_item(&mut self, item: ResponseItem) {
         match item {
-            ResponseItem::Message { id, role, content } => {
+            ResponseItem::Message { id, role, content, .. } => {
                 let message_id = id;
                 let mut text = String::new();
                 for c in content {
@@ -119,7 +119,7 @@ impl ChatWidget<'_> {
                 }
             }
             ResponseItem::FunctionCallOutput { output, call_id, .. } => {
-                let mut content = output.content;
+                let mut content = output.body.to_text().unwrap_or_default();
                 let mut metadata_summary = String::new();
                 if let Ok(v) = serde_json::from_str::<JsonValue>(&content) {
                     if let Some(s) = v.get("output").and_then(|x| x.as_str()) {

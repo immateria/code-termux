@@ -25,6 +25,7 @@ mod naming;
 mod tool_schema;
 
 pub(crate) use exec::execute_agent;
+pub use exec::external_agent_command_exists;
 pub use exec::smoke_test_agent_blocking;
 pub use exec::split_command_and_args;
 pub use manager::AGENT_MANAGER;

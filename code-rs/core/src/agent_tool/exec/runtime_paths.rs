@@ -61,6 +61,129 @@ fn resolve_in_path(command: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+#[cfg(target_os = "windows")]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    path.is_file()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+
+    meta.is_file() && (meta.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_existing_path_with_pathext(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if is_executable_file(path) {
+        return Some(path.to_path_buf());
+    }
+
+    if path.extension().is_some() {
+        return None;
+    }
+
+    let Some(file_name) = path.file_name() else {
+        return None;
+    };
+
+    let base = file_name.to_os_string();
+    for ext in default_pathext_or_default() {
+        let mut name = base.clone();
+        name.push(ext);
+        let candidate = path.with_file_name(name);
+        if is_executable_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_explicit_command_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    resolve_existing_path_with_pathext(path)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_explicit_command_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    is_executable_file(path).then_some(path.to_path_buf())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_command_on_path(command: &str) -> Option<std::path::PathBuf> {
+    resolve_in_path(command)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_command_on_path(command: &str) -> Option<std::path::PathBuf> {
+    let path_os = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_os) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = dir.join(command);
+        if is_executable_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn home_fallback_command_candidates(command: &str) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    if let Some(home) = home.as_ref() {
+        candidates.push(home.join(".local/bin").join(command));
+        candidates.push(home.join(".n/bin").join(command));
+        candidates.push(home.join(".npm-global/bin").join(command));
+    }
+
+    if command.eq_ignore_ascii_case("claude") {
+        if let Some(claude_config_dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+            candidates.push(std::path::PathBuf::from(claude_config_dir).join("local").join(command));
+        }
+        if let Some(home) = home {
+            candidates.push(home.join(".claude/local").join(command));
+        }
+    }
+
+    candidates
+}
+
+pub(crate) fn resolve_external_agent_command_path(command: &str) -> Option<std::path::PathBuf> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.contains(std::path::MAIN_SEPARATOR) || trimmed.contains('/') || trimmed.contains('\\') {
+        let path = std::path::PathBuf::from(trimmed);
+        return resolve_explicit_command_path(&path);
+    }
+
+    if let Some(path) = resolve_command_on_path(trimmed) {
+        return Some(path);
+    }
+
+    for candidate in home_fallback_command_candidates(trimmed) {
+        if let Some(path) = resolve_explicit_command_path(&candidate) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+pub fn external_agent_command_exists(command: &str) -> bool {
+    resolve_external_agent_command_path(command).is_some()
+}
+
 use crate::agent_defaults::agent_model_spec;
 use crate::config_types::AgentConfig;
 

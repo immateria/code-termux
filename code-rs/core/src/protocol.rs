@@ -192,6 +192,9 @@ pub enum Op {
     ExecApproval {
         /// The id of the submission we are approving
         id: String,
+        /// Turn id associated with the approval event, when available.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
         /// The user's decision in response to the request.
         decision: ReviewDecision,
     },
@@ -316,10 +319,12 @@ pub enum AskForApproval {
     #[strum(serialize = "untrusted")]
     UnlessTrusted,
 
-    /// *All* commands are auto‑approved, but they are expected to run inside a
-    /// sandbox where network access is disabled and writes are confined to a
-    /// specific set of paths. If the command fails, it will be escalated to
-    /// the user to approve execution without a sandbox.
+    /// DEPRECATED: *All* commands are auto‑approved, but they are expected to
+    /// run inside a sandbox where network access is disabled and writes are
+    /// confined to a specific set of paths. If the command fails, it will be
+    /// escalated to the user to approve execution without a sandbox.
+    /// Prefer `OnRequest` for interactive runs or `Never` for non-interactive
+    /// runs.
     OnFailure,
 
     /// The model decides when to ask the user for approval.
@@ -682,15 +687,21 @@ fn rate_limit_snapshot_to_protocol(
         used_percent: snapshot.primary_used_percent,
         window_minutes: Some(snapshot.primary_window_minutes),
         resets_in_seconds: snapshot.primary_reset_after_seconds,
+        resets_at: None,
     };
     let secondary = code_protocol::protocol::RateLimitWindow {
         used_percent: snapshot.secondary_used_percent,
         window_minutes: Some(snapshot.secondary_window_minutes),
         resets_in_seconds: snapshot.secondary_reset_after_seconds,
+        resets_at: None,
     };
     code_protocol::protocol::RateLimitSnapshot {
+        limit_id: None,
+        limit_name: None,
         primary: Some(primary),
         secondary: Some(secondary),
+        credits: None,
+        plan_type: None,
     }
 }
 
@@ -766,6 +777,9 @@ pub struct OrderMeta {
 pub enum EventMsg {
     /// Error while executing a submission
     Error(ErrorEvent),
+
+    /// Non-fatal warning surfaced to the user.
+    Warning(WarningEvent),
 
     /// Agent has started a task
     TaskStarted,
@@ -908,6 +922,11 @@ pub struct ErrorEvent {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WarningEvent {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCompleteEvent {
     pub last_agent_message: Option<String>,
 }
@@ -979,6 +998,10 @@ const BASELINE_TOKENS: u64 = 12_000;
 pub struct TokenUsageInfo {
     pub total_token_usage: TokenUsage,
     pub last_token_usage: TokenUsage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_response_model: Option<String>,
     pub model_context_window: Option<u64>,
 }
 
@@ -997,6 +1020,8 @@ impl TokenUsageInfo {
             None => Self {
                 total_token_usage: TokenUsage::default(),
                 last_token_usage: TokenUsage::default(),
+                requested_model: None,
+                latest_response_model: None,
                 model_context_window,
             },
         };
@@ -1237,6 +1262,22 @@ pub enum ExecOutputStream {
     Stderr,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkApprovalProtocol {
+    Http,
+    #[serde(alias = "https_connect", alias = "http-connect")]
+    Https,
+    Socks5Tcp,
+    Socks5Udp,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NetworkApprovalContext {
+    pub host: String,
+    pub protocol: NetworkApprovalProtocol,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExecCommandOutputDeltaEvent {
     /// Identifier for the ExecCommandBegin that produced this chunk.
@@ -1252,6 +1293,10 @@ pub struct ExecCommandOutputDeltaEvent {
 pub struct ExecApprovalRequestEvent {
     /// Identifier for the associated exec call, if available.
     pub call_id: String,
+    /// Turn ID that this command belongs to.
+    /// Uses `#[serde(default)]` for backwards compatibility.
+    #[serde(default)]
+    pub turn_id: String,
     /// The command to be executed.
     pub command: Vec<String>,
     /// The command's working directory.
@@ -1259,6 +1304,9 @@ pub struct ExecApprovalRequestEvent {
     /// Optional human-readable reason for the approval (e.g. retry without sandbox).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Optional network context for a blocked request that can be approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_approval_context: Option<NetworkApprovalContext>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

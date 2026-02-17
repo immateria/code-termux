@@ -34,4 +34,5 @@ pub(crate) use runner::execute_model_with_permissions;
 #[cfg(test)]
 pub(crate) use runner::prefer_json_result;
 pub use command::split_command_and_args;
+pub use runtime_paths::external_agent_command_exists;
 pub use smoke::smoke_test_agent_blocking;

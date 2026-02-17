@@ -1593,7 +1593,6 @@ mod tests {
     use tempfile::TempDir;
     use uuid::Uuid;
 
-    use code_protocol::mcp_protocol::ConversationId;
     use code_protocol::models::{ContentItem, ResponseItem};
     use code_protocol::protocol::EventMsg as ProtoEventMsg;
     use code_protocol::protocol::RecordedEvent;
@@ -1603,6 +1602,7 @@ mod tests {
     use code_protocol::protocol::SessionMetaLine;
     use code_protocol::protocol::SessionSource;
     use code_protocol::protocol::UserMessageEvent;
+    use code_protocol::ThreadId;
 
     #[test]
     fn bash_completion_uses_code_command_name() {
@@ -1726,13 +1726,16 @@ where
         let path = sessions_dir.join(filename);
 
         let session_meta = SessionMeta {
-            id: ConversationId::from(*id),
+            id: ThreadId::from_string(&id.to_string()).expect("valid thread id"),
             timestamp: created_at.to_string(),
             cwd: cwd.to_path_buf(),
             originator: "test".to_string(),
             cli_version: "0.0.0-test".to_string(),
-            instructions: None,
             source,
+            model_provider: None,
+            base_instructions: None,
+            dynamic_tools: None,
+            forked_from_id: None,
         };
 
         let session_line = RolloutLine {
@@ -1751,8 +1754,9 @@ where
                 order: None,
                 msg: ProtoEventMsg::UserMessage(UserMessageEvent {
                     message: user_message.to_string(),
-                    kind: None,
                     images: None,
+                    local_images: vec![],
+                    text_elements: vec![],
                 }),
             }),
         };
@@ -1765,6 +1769,8 @@ where
                 content: vec![ContentItem::InputText {
                     text: user_message.to_string(),
                 }],
+                end_turn: None,
+                phase: None,
             }),
         };
 
@@ -1776,6 +1782,8 @@ where
                 content: vec![ContentItem::OutputText {
                     text: format!("Ack: {}", user_message),
                 }],
+                end_turn: None,
+                phase: None,
             }),
         };
 

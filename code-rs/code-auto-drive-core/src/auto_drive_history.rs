@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 
 use code_core::protocol::TokenUsage;
-use code_protocol::models::{ContentItem, ResponseItem};
+use code_protocol::models::{
+    ContentItem, FunctionCallOutputBody, FunctionCallOutputContentItem, ResponseItem,
+};
 
 use crate::session_metrics::SessionMetrics;
 
@@ -284,6 +286,8 @@ impl AutoDriveHistory {
                     "<compact_summary>\n{summary_text}\n</compact_summary>"
                 ),
             }],
+            end_turn: None,
+            phase: None,
         };
 
         // Replace the slice with the compact item
@@ -359,7 +363,16 @@ fn estimate_item_tokens(item: &ResponseItem) -> usize {
             }).sum()
         }
         ResponseItem::FunctionCall { name, arguments, .. } => name.len() + arguments.len(),
-        ResponseItem::FunctionCallOutput { output, .. } => output.content.len(),
+        ResponseItem::FunctionCallOutput { output, .. } => match &output.body {
+            FunctionCallOutputBody::Text(text) => text.len(),
+            FunctionCallOutputBody::ContentItems(items) => items
+                .iter()
+                .map(|item| match item {
+                    FunctionCallOutputContentItem::InputText { text } => text.len(),
+                    FunctionCallOutputContentItem::InputImage { image_url } => image_url.len() / 10,
+                })
+                .sum(),
+        },
         ResponseItem::CustomToolCall { name, input, .. } => name.len() + input.len(),
         ResponseItem::CustomToolCallOutput { output, .. } => output.len(),
         ResponseItem::Reasoning { summary, content, .. } => {
@@ -406,6 +419,8 @@ mod tests {
             content: vec![ContentItem::InputText {
                 text: text.to_string(),
             }],
+            end_turn: None,
+            phase: None,
         }
     }
 
@@ -416,6 +431,8 @@ mod tests {
             content: vec![ContentItem::OutputText {
                 text: text.to_string(),
             }],
+            end_turn: None,
+            phase: None,
         }
     }
 

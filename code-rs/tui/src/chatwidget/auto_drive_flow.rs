@@ -1,5 +1,7 @@
 use super::*;
 
+use code_core::config_types::AutoDriveModelRoutingEntry;
+
 mod decision_runtime;
 mod review_runtime;
 mod presentation;
@@ -373,6 +375,8 @@ impl ChatWidget<'_> {
         agents_enabled: bool,
         cross_check_enabled: bool,
         qa_automation_enabled: bool,
+        model_routing_enabled: bool,
+        model_routing_entries: Vec<AutoDriveModelRoutingEntry>,
         continue_mode: AutoContinueMode,
     ) {
         let mut changed = false;
@@ -392,6 +396,11 @@ impl ChatWidget<'_> {
             self.auto_state.qa_automation_enabled = qa_automation_enabled;
             changed = true;
         }
+        if self.config.auto_drive.model_routing_enabled != model_routing_enabled
+            || self.config.auto_drive.model_routing_entries != model_routing_entries
+        {
+            changed = true;
+        }
         if self.auto_state.continue_mode != continue_mode {
             let effects = self.auto_state.update_continue_mode(continue_mode);
             self.auto_apply_controller_effects(effects);
@@ -406,6 +415,8 @@ impl ChatWidget<'_> {
         self.config.auto_drive.agents_enabled = agents_enabled;
         self.config.auto_drive.cross_check_enabled = cross_check_enabled;
         self.config.auto_drive.qa_automation_enabled = qa_automation_enabled;
+        self.config.auto_drive.model_routing_enabled = model_routing_enabled;
+        self.config.auto_drive.model_routing_entries = model_routing_entries;
         self.config.auto_drive.continue_mode = auto_continue_to_config(continue_mode);
         self.restore_auto_resolve_attempts_if_lost();
 
