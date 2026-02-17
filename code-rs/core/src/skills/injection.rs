@@ -3,8 +3,11 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use code_protocol::models::ResponseItem;
+use serde::Deserialize;
 use tokio::fs;
 
+use crate::mentions;
+use crate::skills::frontmatter::extract_frontmatter;
 use crate::skills::model::SkillMetadata;
 use crate::user_instructions::SkillInstructions;
 
@@ -12,6 +15,13 @@ use crate::user_instructions::SkillInstructions;
 pub(crate) struct MentionedSkill {
     pub(crate) name: String,
     pub(crate) path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SkillMcpDependency {
+    pub(crate) skill_name: String,
+    pub(crate) server: String,
+    pub(crate) tool: Option<String>,
 }
 
 pub(crate) struct SkillMentionOutcome {
@@ -23,19 +33,7 @@ pub(crate) struct SkillMentionOutcome {
 pub(crate) struct SkillInjections {
     pub(crate) items: Vec<ResponseItem>,
     pub(crate) warnings: Vec<String>,
-}
-
-#[derive(Debug, Default)]
-struct ToolMentions<'a> {
-    names: HashSet<&'a str>,
-    paths: HashSet<&'a str>,
-    plain_names: HashSet<&'a str>,
-}
-
-impl<'a> ToolMentions<'a> {
-    fn is_empty(&self) -> bool {
-        self.names.is_empty() && self.paths.is_empty()
-    }
+    pub(crate) mcp_dependencies: Vec<SkillMcpDependency>,
 }
 
 pub(crate) fn collect_explicit_skill_mentions(
@@ -49,7 +47,7 @@ pub(crate) fn collect_explicit_skill_mentions(
         };
     }
 
-    let mentions = collect_tool_mentions_from_messages(messages);
+    let mentions = mentions::collect_tool_mentions_from_messages(messages);
     if mentions.is_empty() {
         return SkillMentionOutcome {
             mentioned: Vec::new(),
@@ -152,10 +150,20 @@ pub(crate) async fn build_skill_injections(skills: &[MentionedSkill]) -> SkillIn
 
     let mut items: Vec<ResponseItem> = Vec::with_capacity(skills.len());
     let mut warnings: Vec<String> = Vec::new();
+    let mut mcp_dependencies: Vec<SkillMcpDependency> = Vec::new();
 
     for skill in skills {
         match fs::read_to_string(&skill.path).await {
             Ok(contents) => {
+                match parse_skill_mcp_dependencies(skill.name.as_str(), contents.as_str()) {
+                    Ok(deps) => mcp_dependencies.extend(deps),
+                    Err(err) => warnings.push(format!(
+                        "Failed to parse MCP dependencies for skill `{}` at {}: {err}",
+                        skill.name,
+                        skill.path.display()
+                    )),
+                }
+
                 let path = skill.path.to_string_lossy().replace('\\', "/");
                 items.push(
                     SkillInstructions {
@@ -176,155 +184,110 @@ pub(crate) async fn build_skill_injections(skills: &[MentionedSkill]) -> SkillIn
         }
     }
 
-    SkillInjections { items, warnings }
-}
-
-fn collect_tool_mentions_from_messages<'a>(messages: &'a [String]) -> ToolMentions<'a> {
-    let mut out = ToolMentions::default();
-    for message in messages {
-        let mentions = extract_tool_mentions(message);
-        out.names.extend(mentions.names);
-        out.paths.extend(mentions.paths);
-        out.plain_names.extend(mentions.plain_names);
+    SkillInjections {
+        items,
+        warnings,
+        mcp_dependencies,
     }
-    out
 }
 
-/// Extract `$tool-name` mentions from a single text input.
-///
-/// Supports explicit resource links in the form `[$tool-name](resource path)`.
-fn extract_tool_mentions(text: &str) -> ToolMentions<'_> {
-    let text_bytes = text.as_bytes();
-    let mut mentioned_names: HashSet<&str> = HashSet::new();
-    let mut mentioned_paths: HashSet<&str> = HashSet::new();
-    let mut plain_names: HashSet<&str> = HashSet::new();
+#[derive(Debug, Deserialize, Default)]
+struct SkillFrontmatterMcpDeps {
+    #[serde(default)]
+    mcp_servers: Vec<String>,
+    #[serde(default)]
+    mcp_tools: Vec<McpToolDepSpec>,
+}
 
-    let mut index = 0;
-    while index < text_bytes.len() {
-        let byte = text_bytes[index];
-        if byte == b'['
-            && let Some((name, path, end_index)) =
-                parse_linked_tool_mention(text, text_bytes, index)
-        {
-            if !is_common_env_var(name) {
-                mentioned_names.insert(name);
-                mentioned_paths.insert(path);
-            }
-            index = end_index;
-            continue;
-        }
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum McpToolDepSpec {
+    String(String),
+    Map { server: String, tool: String },
+}
 
-        if byte != b'$' {
-            index += 1;
-            continue;
-        }
+fn parse_skill_mcp_dependencies(
+    skill_name: &str,
+    contents: &str,
+) -> Result<Vec<SkillMcpDependency>, String> {
+    let Some(frontmatter) = extract_frontmatter(contents) else {
+        return Ok(Vec::new());
+    };
 
-        let name_start = index + 1;
-        let Some(first_name_byte) = text_bytes.get(name_start) else {
-            index += 1;
+    let parsed: SkillFrontmatterMcpDeps = serde_yaml::from_str(&frontmatter)
+        .map_err(|err| format!("invalid YAML frontmatter: {err}"))?;
+
+    let mut dedupe: HashSet<(String, Option<String>)> = HashSet::new();
+    let mut out: Vec<SkillMcpDependency> = Vec::new();
+
+    for server in parsed.mcp_servers {
+        let Some(server) = normalize_mcp_identifier(server.as_str()) else {
             continue;
         };
-        if !is_mention_name_char(*first_name_byte) {
-            index += 1;
-            continue;
+        if dedupe.insert((server.clone(), None)) {
+            out.push(SkillMcpDependency {
+                skill_name: skill_name.to_string(),
+                server,
+                tool: None,
+            });
         }
-
-        let mut name_end = name_start + 1;
-        while let Some(next_byte) = text_bytes.get(name_end)
-            && is_mention_name_char(*next_byte)
-        {
-            name_end += 1;
-        }
-
-        let name = &text[name_start..name_end];
-        if !is_common_env_var(name) {
-            mentioned_names.insert(name);
-            plain_names.insert(name);
-        }
-        index = name_end;
     }
 
-    ToolMentions {
-        names: mentioned_names,
-        paths: mentioned_paths,
-        plain_names,
+    for entry in parsed.mcp_tools {
+        let (server, tool) = match entry {
+            McpToolDepSpec::String(spec) => match parse_mcp_tool_spec(spec.as_str()) {
+                Some(pair) => pair,
+                None => {
+                    return Err(format!(
+                        "invalid mcp_tools entry `{spec}` (expected `server/tool` or `server::tool`)",
+                    ));
+                }
+            },
+            McpToolDepSpec::Map { server, tool } => {
+                let server = normalize_mcp_identifier(server.as_str())
+                    .ok_or_else(|| "mcp_tools.server cannot be empty".to_string())?;
+                let tool = normalize_mcp_identifier(tool.as_str())
+                    .ok_or_else(|| "mcp_tools.tool cannot be empty".to_string())?;
+                (server, tool)
+            }
+        };
+
+        if dedupe.insert((server.clone(), Some(tool.clone()))) {
+            out.push(SkillMcpDependency {
+                skill_name: skill_name.to_string(),
+                server,
+                tool: Some(tool),
+            });
+        }
     }
+
+    Ok(out)
 }
 
-fn parse_linked_tool_mention<'a>(
-    text: &'a str,
-    text_bytes: &[u8],
-    start: usize,
-) -> Option<(&'a str, &'a str, usize)> {
-    let dollar_index = start + 1;
-    if text_bytes.get(dollar_index) != Some(&b'$') {
-        return None;
-    }
-
-    let name_start = dollar_index + 1;
-    let first_name_byte = text_bytes.get(name_start)?;
-    if !is_mention_name_char(*first_name_byte) {
-        return None;
-    }
-
-    let mut name_end = name_start + 1;
-    while let Some(next_byte) = text_bytes.get(name_end)
-        && is_mention_name_char(*next_byte)
-    {
-        name_end += 1;
-    }
-
-    if text_bytes.get(name_end) != Some(&b']') {
-        return None;
-    }
-
-    let mut path_start = name_end + 1;
-    while let Some(next_byte) = text_bytes.get(path_start)
-        && next_byte.is_ascii_whitespace()
-    {
-        path_start += 1;
-    }
-    if text_bytes.get(path_start) != Some(&b'(') {
-        return None;
-    }
-
-    let mut path_end = path_start + 1;
-    while let Some(next_byte) = text_bytes.get(path_end) && *next_byte != b')' {
-        path_end += 1;
-    }
-    if text_bytes.get(path_end) != Some(&b')') {
-        return None;
-    }
-
-    let path = text[path_start + 1..path_end].trim();
-    if path.is_empty() {
-        return None;
-    }
-
-    let name = &text[name_start..name_end];
-    Some((name, path, path_end + 1))
+fn normalize_mcp_identifier(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_ascii_lowercase())
 }
 
-fn is_common_env_var(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    matches!(
-        upper.as_str(),
-        "PATH"
-            | "HOME"
-            | "USER"
-            | "SHELL"
-            | "PWD"
-            | "TMPDIR"
-            | "TEMP"
-            | "TMP"
-            | "LANG"
-            | "TERM"
-            | "XDG_CONFIG_HOME"
-    )
-}
+fn parse_mcp_tool_spec(spec: &str) -> Option<(String, String)> {
+    let mut trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
 
-fn is_mention_name_char(byte: u8) -> bool {
-    matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-')
+    if let Some(rest) = trimmed.strip_prefix("mcp://") {
+        trimmed = rest;
+    }
+
+    let (server, tool) = if let Some((server, tool)) = trimmed.split_once("::") {
+        (server, tool)
+    } else {
+        trimmed.split_once('/')?
+    };
+
+    let server = normalize_mcp_identifier(server)?;
+    let tool = normalize_mcp_identifier(tool)?;
+    Some((server, tool))
 }
 
 fn normalize_skill_path(path: &str) -> &str {

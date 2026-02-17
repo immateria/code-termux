@@ -316,6 +316,10 @@ impl ModelClient {
         }
     }
 
+    pub(crate) fn config(&self) -> &Arc<Config> {
+        &self.config
+    }
+
     /// Get the reasoning effort configuration
     pub fn get_reasoning_effort(&self) -> ReasoningEffortConfig {
         self.effort

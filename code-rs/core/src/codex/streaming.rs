@@ -2497,6 +2497,19 @@ async fn run_turn(
                 sess.send_event(event).await;
             }
 
+            for warning in crate::mcp::skill_dependencies::build_skill_mcp_dependency_warnings(
+                injections.mcp_dependencies.as_slice(),
+                &sess.mcp_connection_manager,
+                tc.client.config().as_ref(),
+                sess.user_shell.script_style(),
+            ) {
+                let event = sess.make_event(
+                    &sub_id,
+                    EventMsg::Warning(crate::protocol::WarningEvent { message: warning }),
+                );
+                sess.send_event(event).await;
+            }
+
             if !injections.items.is_empty() {
                 input.extend(injections.items);
             }

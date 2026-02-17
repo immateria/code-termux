@@ -5,6 +5,7 @@ use crate::skills::model::SkillError;
 use crate::skills::model::SkillLoadOutcome;
 use crate::skills::model::SkillMetadata;
 use crate::skills::model::SkillScope;
+use crate::skills::frontmatter::extract_frontmatter;
 use crate::skills::system::system_cache_root_dir;
 use crate::skills::system::install_system_skills;
 use dunce::canonicalize as normalize_path;
@@ -395,29 +396,6 @@ fn validate_field(
         });
     }
     Ok(())
-}
-
-fn extract_frontmatter(contents: &str) -> Option<String> {
-    let mut lines = contents.lines();
-    if !matches!(lines.next(), Some(line) if line.trim() == "---") {
-        return None;
-    }
-
-    let mut frontmatter_lines: Vec<&str> = Vec::new();
-    let mut found_closing = false;
-    for line in lines.by_ref() {
-        if line.trim() == "---" {
-            found_closing = true;
-            break;
-        }
-        frontmatter_lines.push(line);
-    }
-
-    if frontmatter_lines.is_empty() || !found_closing {
-        return None;
-    }
-
-    Some(frontmatter_lines.join("\n"))
 }
 
 #[cfg(test)]
