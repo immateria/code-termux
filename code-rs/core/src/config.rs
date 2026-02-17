@@ -50,6 +50,7 @@ use crate::project_features::{load_project_commands, ProjectCommand, ProjectHook
 use code_app_server_protocol::AuthMode;
 use code_protocol::config_types::SandboxMode;
 use code_protocol::dynamic_tools::DynamicToolSpec;
+use code_rmcp_client::OAuthCredentialsStoreMode;
 use std::time::Instant;
 use serde::Deserialize;
 use serde::de::{self, Unexpected};
@@ -394,6 +395,18 @@ pub struct Config {
     /// Preferred backend for storing CLI auth credentials (for example, keyring vs file).
     pub cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
 
+    /// Preferred store for MCP OAuth credentials.
+    ///
+    /// - `auto` (default): keyring if available, otherwise file.
+    /// - `file`: `CODE_HOME/.credentials.json`
+    /// - `keyring`: OS keyring service (fails if unavailable).
+    pub mcp_oauth_credentials_store_mode: OAuthCredentialsStoreMode,
+
+    /// Optional fixed port to use for the local HTTP callback server used during MCP OAuth login.
+    ///
+    /// When unset, Code binds to an ephemeral port chosen by the OS.
+    pub mcp_oauth_callback_port: Option<u16>,
+
     /// Settings that govern if and what will be written to `~/.code/history.jsonl`
     /// (Code still reads legacy `~/.codex/history.jsonl`).
     pub history: History,
@@ -691,6 +704,18 @@ pub struct ConfigToml {
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+
+    /// Preferred store for MCP OAuth credentials (used by streamable HTTP MCP servers).
+    ///
+    /// - `auto` (default): keyring if available, otherwise file.
+    /// - `file`: `CODE_HOME/.credentials.json`
+    /// - `keyring`: OS keyring service (fails if unavailable).
+    #[serde(default)]
+    pub mcp_oauth_credentials_store: Option<OAuthCredentialsStoreMode>,
+
+    /// Optional fixed port to use for the local HTTP callback server used during MCP OAuth login.
+    #[serde(default)]
+    pub mcp_oauth_callback_port: Option<u16>,
 
     /// Optional ACP client tool identifiers supplied by the host IDE.
     #[serde(default)]
@@ -1240,6 +1265,10 @@ impl Config {
         let using_chatgpt_auth =
             Self::is_using_chatgpt_auth(&code_home, cli_auth_credentials_store_mode);
 
+        let mcp_oauth_credentials_store_mode =
+            cfg.mcp_oauth_credentials_store.unwrap_or_default();
+        let mcp_oauth_callback_port = cfg.mcp_oauth_callback_port;
+
         let auto_switch_accounts_on_rate_limit = config_profile
             .auto_switch_accounts_on_rate_limit
             .or(cfg.auto_switch_accounts_on_rate_limit)
@@ -1609,6 +1638,8 @@ impl Config {
                 .collect(),
             code_home,
             cli_auth_credentials_store_mode,
+            mcp_oauth_credentials_store_mode,
+            mcp_oauth_callback_port,
             history,
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
             tui: tui_config.clone(),

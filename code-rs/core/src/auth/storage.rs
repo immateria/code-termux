@@ -14,9 +14,9 @@ use tracing::warn;
 
 use crate::config::resolve_code_path_for_read;
 use crate::config_types::AuthCredentialsStoreMode;
-use crate::keyring_keys::store_key_for_code_home;
 use code_keyring_store::DefaultKeyringStore;
 use code_keyring_store::KeyringStore;
+use code_keyring_store::store_key_for_code_home;
 use once_cell::sync::Lazy;
 
 use super::AuthDotJson;

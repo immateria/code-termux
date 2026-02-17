@@ -8,7 +8,6 @@
 
 mod apply_patch;
 mod fs_sanitize;
-mod keyring_keys;
 pub mod auth;
 pub mod auth_accounts;
 pub mod account_usage;

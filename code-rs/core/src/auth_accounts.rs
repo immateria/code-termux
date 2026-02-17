@@ -15,8 +15,8 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::config_types::AuthCredentialsStoreMode;
-use crate::keyring_keys::store_key_for_code_home;
 use crate::token_data::TokenData;
+use code_keyring_store::store_key_for_code_home;
 
 const ACCOUNTS_FILE_NAME: &str = "auth_accounts.json";
 const ACCOUNTS_CONFIG_TABLE: &str = "accounts";

@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::sync::RwLock as StdRwLock;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +17,10 @@ use std::time::Duration;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
+use code_protocol::protocol::McpAuthStatus;
+use code_rmcp_client::OAuthCredentialsStoreMode;
 use code_rmcp_client::RmcpClient;
+use futures::future::join_all;
 use mcp_types::ClientCapabilities;
 use mcp_types::Implementation;
 use mcp_types::Tool;
@@ -78,6 +82,34 @@ fn append_sha1_suffix(base: &str, raw: &str) -> String {
         base
     };
     format!("{prefix}{sha1_str}")
+}
+
+fn resolve_streamable_http_bearer_token(
+    server_name: &str,
+    bearer_token: Option<String>,
+    bearer_token_env_var: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(env_var) = bearer_token_env_var else {
+        return Ok(bearer_token);
+    };
+
+    match std::env::var(env_var) {
+        Ok(value) => {
+            if value.is_empty() {
+                Err(anyhow!(
+                    "Environment variable {env_var} for MCP server '{server_name}' is empty"
+                ))
+            } else {
+                Ok(Some(value))
+            }
+        }
+        Err(std::env::VarError::NotPresent) => Err(anyhow!(
+            "Environment variable {env_var} for MCP server '{server_name}' is not set"
+        )),
+        Err(std::env::VarError::NotUnicode(_)) => Err(anyhow!(
+            "Environment variable {env_var} for MCP server '{server_name}' contains invalid Unicode"
+        )),
+    }
 }
 
 /// Default timeout for initializing MCP server & initially listing tools.
@@ -162,12 +194,28 @@ impl McpClientAdapter {
     }
 
     async fn new_streamable_http_client(
+        code_home: PathBuf,
+        server_name: &str,
         url: String,
         bearer_token: Option<String>,
+        http_headers: Option<HashMap<String, String>>,
+        env_http_headers: Option<HashMap<String, String>>,
+        oauth_store_mode: OAuthCredentialsStoreMode,
         params: mcp_types::InitializeRequestParams,
         startup_timeout: Duration,
     ) -> Result<Self> {
-        let client = Arc::new(RmcpClient::new_streamable_http_client(url, bearer_token)?);
+        let client = Arc::new(
+            RmcpClient::new_streamable_http_client(
+                code_home,
+                server_name,
+                &url,
+                bearer_token,
+                http_headers,
+                env_http_headers,
+                oauth_store_mode,
+            )
+            .await?,
+        );
         client.initialize(params, Some(startup_timeout)).await?;
         Ok(McpClientAdapter::Rmcp(client))
     }
@@ -205,6 +253,11 @@ impl McpClientAdapter {
 /// A thin wrapper around a set of running [`RmcpClient`] instances.
 #[derive(Default)]
 pub struct McpConnectionManager {
+    /// Directory containing all Code state (used for MCP OAuth token storage).
+    code_home: PathBuf,
+    mcp_oauth_credentials_store_mode: OAuthCredentialsStoreMode,
+    server_transports: HashMap<String, McpServerTransportConfig>,
+
     /// Server-name -> client instance.
     ///
     /// The server name originates from the keys of the `mcp_servers` map in
@@ -228,17 +281,32 @@ impl McpConnectionManager {
     /// Servers that fail to start or list tools are reported in `ClientStartErrors`:
     /// the user should be informed about these errors.
     pub async fn new(
+        code_home: PathBuf,
+        mcp_oauth_credentials_store_mode: OAuthCredentialsStoreMode,
         mcp_servers: HashMap<String, McpServerConfig>,
         excluded_tools: HashSet<(String, String)>,
     ) -> Result<(Self, ClientStartErrors)> {
         // Early exit if no servers are configured.
         if mcp_servers.is_empty() {
-            return Ok((Self::default(), ClientStartErrors::default()));
+            return Ok((
+                Self {
+                    code_home,
+                    mcp_oauth_credentials_store_mode,
+                    server_transports: HashMap::new(),
+                    clients: TokioRwLock::new(HashMap::new()),
+                    tools: StdRwLock::new(HashMap::new()),
+                    excluded_tools: StdRwLock::new(excluded_tools),
+                    server_names: Vec::new(),
+                    failures: StdRwLock::new(HashMap::new()),
+                },
+                ClientStartErrors::default(),
+            ));
         }
 
         // Launch all configured servers concurrently.
         let mut join_set = JoinSet::new();
         let mut errors = ClientStartErrors::new();
+        let mut server_transports = HashMap::with_capacity(mcp_servers.len());
 
         for (server_name, cfg) in mcp_servers {
             // Validate server name before spawning
@@ -253,8 +321,12 @@ impl McpConnectionManager {
                 continue;
             }
 
+            server_transports.insert(server_name.clone(), cfg.transport.clone());
+
             let startup_timeout = cfg.startup_timeout_sec.unwrap_or(DEFAULT_STARTUP_TIMEOUT);
             let tool_timeout = cfg.tool_timeout_sec;
+            let code_home_for_server = code_home.clone();
+            let oauth_store_mode = mcp_oauth_credentials_store_mode;
 
             join_set.spawn(async move {
                 let McpServerConfig { transport, .. } = cfg;
@@ -306,14 +378,34 @@ impl McpConnectionManager {
                             }
                         })
                     }
-                    McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
-                        McpClientAdapter::new_streamable_http_client(
-                            url,
+                    McpServerTransportConfig::StreamableHttp {
+                        url,
+                        bearer_token,
+                        bearer_token_env_var,
+                        http_headers,
+                        env_http_headers,
+                    } => {
+                        match resolve_streamable_http_bearer_token(
+                            &server_name_for_error,
                             bearer_token,
-                            params,
-                            startup_timeout,
-                        )
-                        .await
+                            bearer_token_env_var.as_deref(),
+                        ) {
+                            Ok(bearer_token) => {
+                                McpClientAdapter::new_streamable_http_client(
+                                    code_home_for_server,
+                                    &server_name_for_error,
+                                    url,
+                                    bearer_token,
+                                    http_headers,
+                                    env_http_headers,
+                                    oauth_store_mode,
+                                    params,
+                                    startup_timeout,
+                                )
+                                .await
+                            }
+                            Err(err) => Err(err),
+                        }
                     }
                 }
                 .map(|c| (c, startup_timeout));
@@ -366,6 +458,9 @@ impl McpConnectionManager {
         let failures = errors.clone();
 
         Ok((Self {
+            code_home,
+            mcp_oauth_credentials_store_mode,
+            server_transports,
             clients: TokioRwLock::new(clients),
             tools: StdRwLock::new(tools),
             excluded_tools: StdRwLock::new(excluded_tools),
@@ -506,6 +601,51 @@ impl McpConnectionManager {
 
     pub fn list_server_failures(&self) -> HashMap<String, McpServerFailure> {
         self.failures_read().clone()
+    }
+
+    pub async fn list_auth_statuses(&self) -> HashMap<String, McpAuthStatus> {
+        let store_mode = self.mcp_oauth_credentials_store_mode;
+        let code_home = self.code_home.clone();
+
+        let futures = self.server_transports.iter().map(|(server_name, transport)| {
+            let server_name = server_name.clone();
+            let transport = transport.clone();
+            let code_home = code_home.clone();
+            async move {
+                let status = match transport {
+                    McpServerTransportConfig::Stdio { .. } => McpAuthStatus::Unsupported,
+                    McpServerTransportConfig::StreamableHttp {
+                        url,
+                        bearer_token,
+                        bearer_token_env_var,
+                        http_headers,
+                        env_http_headers,
+                    } => match code_rmcp_client::determine_streamable_http_auth_status(
+                        &code_home,
+                        &server_name,
+                        &url,
+                        bearer_token.as_deref(),
+                        bearer_token_env_var.as_deref(),
+                        http_headers,
+                        env_http_headers,
+                        store_mode,
+                    )
+                    .await
+                    {
+                        Ok(status) => status,
+                        Err(error) => {
+                            warn!(
+                                "failed to determine auth status for MCP server `{server_name}`: {error:#}"
+                            );
+                            McpAuthStatus::Unsupported
+                        }
+                    },
+                };
+                (server_name, status)
+            }
+        });
+
+        join_all(futures).await.into_iter().collect()
     }
 
     /// Invoke the tool indicated by the (server, tool) pair.
@@ -788,7 +928,13 @@ mod tests {
             },
         );
 
-        let (_manager, errors) = McpConnectionManager::new(servers, HashSet::new())
+        let code_home = tempfile::tempdir().expect("code home");
+        let (_manager, errors) = McpConnectionManager::new(
+            code_home.path().to_path_buf(),
+            OAuthCredentialsStoreMode::Auto,
+            servers,
+            HashSet::new(),
+        )
             .await
             .expect("manager creation should succeed even when servers fail");
 

@@ -1,8 +1,11 @@
 use keyring::Entry;
 use keyring::Error as KeyringError;
+use sha2::Digest;
+use sha2::Sha256;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Debug;
+use std::path::Path;
 use tracing::trace;
 
 #[derive(Debug)]
@@ -37,6 +40,24 @@ impl fmt::Display for CredentialStoreError {
 }
 
 impl Error for CredentialStoreError {}
+
+/// Return a deterministic keyring account key for a given `CODE_HOME` path.
+///
+/// The keyring API splits storage into `{service, account}`. We want the
+/// account key to remain stable per `CODE_HOME`, while avoiding leaking the
+/// full path into OS credential UIs.
+pub fn store_key_for_code_home(prefix: &str, code_home: &Path) -> String {
+    let canonical = code_home
+        .canonicalize()
+        .unwrap_or_else(|_| code_home.to_path_buf());
+    let path_str = canonical.to_string_lossy();
+    let mut hasher = Sha256::new();
+    hasher.update(path_str.as_bytes());
+    let digest = hasher.finalize();
+    let hex = format!("{digest:x}");
+    let truncated = hex.get(..16).unwrap_or(&hex);
+    format!("{prefix}|{truncated}")
+}
 
 /// Shared credential store abstraction for keyring-backed implementations.
 pub trait KeyringStore: Debug + Send + Sync {
@@ -224,4 +245,3 @@ pub mod tests {
         }
     }
 }
-

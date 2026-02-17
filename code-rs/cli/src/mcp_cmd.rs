@@ -130,6 +130,9 @@ fn build_mcp_transport_for_add(
             return Ok(McpServerTransportConfig::StreamableHttp {
                 url,
                 bearer_token: Some(bearer_token),
+                bearer_token_env_var: None,
+                http_headers: None,
+                env_http_headers: None,
             });
         }
         return Ok(McpServerTransportConfig::Stdio {
@@ -239,7 +242,7 @@ mod tests {
         .expect("transport");
 
         match transport {
-            McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
+            McpServerTransportConfig::StreamableHttp { url, bearer_token, .. } => {
                 assert_eq!(url, "https://mcp.example.com/mcp");
                 assert_eq!(bearer_token.as_deref(), Some("token"));
             }
@@ -294,11 +297,20 @@ fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Resul
                         "args": args,
                         "env": env,
                     }),
-                    McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
+                    McpServerTransportConfig::StreamableHttp {
+                        url,
+                        bearer_token,
+                        bearer_token_env_var,
+                        http_headers,
+                        env_http_headers,
+                    } => {
                         serde_json::json!({
                             "type": "streamable_http",
                             "url": url,
                             "bearer_token": bearer_token,
+                            "bearer_token_env_var": bearer_token_env_var,
+                            "http_headers": http_headers,
+                            "env_http_headers": env_http_headers,
                         })
                     }
                 };
@@ -347,8 +359,13 @@ fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Resul
                 };
                 stdio_rows.push([name.clone(), command.clone(), args_display, env_display]);
             }
-            McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
-                let has_bearer = if bearer_token.is_some() {
+            McpServerTransportConfig::StreamableHttp {
+                url,
+                bearer_token,
+                bearer_token_env_var,
+                ..
+            } => {
+                let has_bearer = if bearer_token.is_some() || bearer_token_env_var.is_some() {
                     "True"
                 } else {
                     "False"
@@ -448,10 +465,19 @@ fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Result<(
                 "args": args,
                 "env": env,
             }),
-            McpServerTransportConfig::StreamableHttp { url, bearer_token } => serde_json::json!({
+            McpServerTransportConfig::StreamableHttp {
+                url,
+                bearer_token,
+                bearer_token_env_var,
+                http_headers,
+                env_http_headers,
+            } => serde_json::json!({
                 "type": "streamable_http",
                 "url": url,
                 "bearer_token": bearer_token,
+                "bearer_token_env_var": bearer_token_env_var,
+                "http_headers": http_headers,
+                "env_http_headers": env_http_headers,
             }),
         };
         let output = serde_json::to_string_pretty(&serde_json::json!({
@@ -490,7 +516,13 @@ fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Result<(
             };
             println!("  env: {env_display}");
         }
-        McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
+        McpServerTransportConfig::StreamableHttp {
+            url,
+            bearer_token,
+            bearer_token_env_var,
+            http_headers,
+            env_http_headers,
+        } => {
             println!("  transport: streamable_http");
             println!("  url: {url}");
             let token_display = bearer_token
@@ -498,6 +530,18 @@ fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Result<(
                 .map(|_| "<redacted>".to_string())
                 .unwrap_or_else(|| "-".to_string());
             println!("  bearer_token: {token_display}");
+            let env_var_display = bearer_token_env_var.as_deref().unwrap_or("-");
+            println!("  bearer_token_env_var: {env_var_display}");
+            let headers_display = http_headers
+                .as_ref()
+                .map(|headers| format!("{} header(s)", headers.len()))
+                .unwrap_or_else(|| "-".to_string());
+            println!("  http_headers: {headers_display}");
+            let env_headers_display = env_http_headers
+                .as_ref()
+                .map(|headers| format!("{} header(s)", headers.len()))
+                .unwrap_or_else(|| "-".to_string());
+            println!("  env_http_headers: {env_headers_display}");
         }
     }
     if let Some(timeout) = server.startup_timeout_sec {

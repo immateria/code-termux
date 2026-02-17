@@ -114,10 +114,45 @@ pub fn write_global_mcp_servers(
                         entry["env"] = TomlItem::Table(env_table);
                     }
                 }
-                McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
+                McpServerTransportConfig::StreamableHttp {
+                    url,
+                    bearer_token,
+                    bearer_token_env_var,
+                    http_headers,
+                    env_http_headers,
+                } => {
                     entry["url"] = toml_edit::value(url.clone());
                     if let Some(token) = bearer_token {
                         entry["bearer_token"] = toml_edit::value(token.clone());
+                    }
+                    if let Some(env_var) = bearer_token_env_var {
+                        entry["bearer_token_env_var"] = toml_edit::value(env_var.clone());
+                    }
+
+                    if let Some(http_headers) = http_headers
+                        && !http_headers.is_empty()
+                    {
+                        let mut headers_table = TomlTable::new();
+                        headers_table.set_implicit(false);
+                        let mut pairs: Vec<_> = http_headers.iter().collect();
+                        pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        for (key, value) in pairs {
+                            headers_table.insert(key, toml_edit::value(value.clone()));
+                        }
+                        entry["http_headers"] = TomlItem::Table(headers_table);
+                    }
+
+                    if let Some(env_http_headers) = env_http_headers
+                        && !env_http_headers.is_empty()
+                    {
+                        let mut headers_table = TomlTable::new();
+                        headers_table.set_implicit(false);
+                        let mut pairs: Vec<_> = env_http_headers.iter().collect();
+                        pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        for (key, value) in pairs {
+                            headers_table.insert(key, toml_edit::value(value.clone()));
+                        }
+                        entry["env_http_headers"] = TomlItem::Table(headers_table);
                     }
                 }
             }
@@ -1983,9 +2018,41 @@ pub fn list_mcp_servers(code_home: &Path) -> anyhow::Result<McpServerListPair> {
                         .and_then(|v| v.as_str())
                         .map(std::string::ToString::to_string);
 
+                    let bearer_token_env_var = t
+                        .get("bearer_token_env_var")
+                        .and_then(|v| v.as_str())
+                        .map(std::string::ToString::to_string);
+
+                    let table_string_map = |item: &toml_edit::Item| {
+                        item.as_inline_table()
+                            .map(|tbl| {
+                                tbl.iter()
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|s| (k.to_string(), s.to_string()))
+                                    })
+                                    .collect::<HashMap<_, _>>()
+                            })
+                            .or_else(|| {
+                                item.as_table().map(|table| {
+                                    table
+                                        .iter()
+                                        .filter_map(|(k, v)| {
+                                            v.as_str().map(|s| (k.to_string(), s.to_string()))
+                                        })
+                                        .collect::<HashMap<_, _>>()
+                                })
+                            })
+                    };
+
+                    let http_headers = t.get("http_headers").and_then(table_string_map);
+                    let env_http_headers = t.get("env_http_headers").and_then(table_string_map);
+
                     McpServerTransportConfig::StreamableHttp {
                         url: url.to_string(),
                         bearer_token,
+                        bearer_token_env_var,
+                        http_headers,
+                        env_http_headers,
                     }
                 } else {
                     continue;
@@ -2120,10 +2187,43 @@ pub fn add_mcp_server(
                 server_tbl.insert("env", TomlItem::Value(toml_edit::Value::InlineTable(it)));
             }
         }
-        McpServerTransportConfig::StreamableHttp { url, bearer_token } => {
+        McpServerTransportConfig::StreamableHttp {
+            url,
+            bearer_token,
+            bearer_token_env_var,
+            http_headers,
+            env_http_headers,
+        } => {
             server_tbl.insert("url", toml_edit::value(url));
             if let Some(token) = bearer_token {
                 server_tbl.insert("bearer_token", toml_edit::value(token));
+            }
+            if let Some(env_var) = bearer_token_env_var {
+                server_tbl.insert("bearer_token_env_var", toml_edit::value(env_var));
+            }
+            if let Some(http_headers) = http_headers
+                && !http_headers.is_empty()
+            {
+                let mut it = toml_edit::InlineTable::new();
+                for (k, v) in http_headers {
+                    it.insert(&k, toml_edit::Value::from(v));
+                }
+                server_tbl.insert(
+                    "http_headers",
+                    TomlItem::Value(toml_edit::Value::InlineTable(it)),
+                );
+            }
+            if let Some(env_http_headers) = env_http_headers
+                && !env_http_headers.is_empty()
+            {
+                let mut it = toml_edit::InlineTable::new();
+                for (k, v) in env_http_headers {
+                    it.insert(&k, toml_edit::Value::from(v));
+                }
+                server_tbl.insert(
+                    "env_http_headers",
+                    TomlItem::Value(toml_edit::Value::InlineTable(it)),
+                );
             }
         }
     }

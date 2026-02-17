@@ -717,6 +717,8 @@ pub(super) async fn submission_loop(
                 }
 
                 let (mcp_connection_manager, failed_clients) = match McpConnectionManager::new(
+                    config.code_home.clone(),
+                    config.mcp_oauth_credentials_store_mode,
                     config.mcp_servers.clone(),
                     excluded_tools,
                 )
@@ -1250,6 +1252,7 @@ pub(super) async fn submission_loop(
                 let server_disabled_tools =
                     sess.mcp_connection_manager.list_disabled_tools_by_server();
                 let server_failures = sess.mcp_connection_manager.list_server_failures();
+                let auth_statuses = sess.mcp_connection_manager.list_auth_statuses().await;
 
                 let event = Event {
                     id: sub.id.clone(),
@@ -1261,7 +1264,7 @@ pub(super) async fn submission_loop(
                         server_failures: Some(server_failures),
                         resources: std::collections::HashMap::new(),
                         resource_templates: std::collections::HashMap::new(),
-                        auth_statuses: std::collections::HashMap::new(),
+                        auth_statuses,
                     }),
                     order: None,
                 };
@@ -1306,6 +1309,7 @@ pub(super) async fn submission_loop(
                 let server_disabled_tools =
                     sess.mcp_connection_manager.list_disabled_tools_by_server();
                 let server_failures = sess.mcp_connection_manager.list_server_failures();
+                let auth_statuses = sess.mcp_connection_manager.list_auth_statuses().await;
 
                 let event = Event {
                     id: sub.id.clone(),
@@ -1317,7 +1321,7 @@ pub(super) async fn submission_loop(
                         server_failures: Some(server_failures),
                         resources: std::collections::HashMap::new(),
                         resource_templates: std::collections::HashMap::new(),
-                        auth_statuses: std::collections::HashMap::new(),
+                        auth_statuses,
                     }),
                     order: None,
                 };
@@ -1368,6 +1372,7 @@ pub(super) async fn submission_loop(
                 let server_disabled_tools =
                     sess.mcp_connection_manager.list_disabled_tools_by_server();
                 let server_failures = sess.mcp_connection_manager.list_server_failures();
+                let auth_statuses = sess.mcp_connection_manager.list_auth_statuses().await;
 
                 let event = Event {
                     id: sub.id.clone(),
@@ -1379,7 +1384,7 @@ pub(super) async fn submission_loop(
                         server_failures: Some(server_failures),
                         resources: std::collections::HashMap::new(),
                         resource_templates: std::collections::HashMap::new(),
-                        auth_statuses: std::collections::HashMap::new(),
+                        auth_statuses,
                     }),
                     order: None,
                 };

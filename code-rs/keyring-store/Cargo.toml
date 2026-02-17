@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 keyring = { workspace = true, features = ["crypto-rust"] }
+sha2 = { workspace = true }
 tracing = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -22,4 +23,3 @@ keyring = { workspace = true, features = ["windows-native"] }
 
 [target.'cfg(any(target_os = "freebsd", target_os = "openbsd"))'.dependencies]
 keyring = { workspace = true, features = ["sync-secret-service"] }
-
