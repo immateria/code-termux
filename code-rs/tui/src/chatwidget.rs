@@ -2644,6 +2644,7 @@ impl ChatWidget<'_> {
             self.config.code_home.clone(),
             self.app_event_tx.clone(),
             ticket,
+            self.config.cli_auth_credentials_store_mode,
         );
         self.login_view_state = Some(LoginAccountsState::weak_handle(&state_rc));
         self.login_add_view_state = None;
@@ -2669,6 +2670,7 @@ impl ChatWidget<'_> {
             self.config.code_home.clone(),
             self.app_event_tx.clone(),
             ticket,
+            self.config.cli_auth_credentials_store_mode,
         );
         self.login_add_view_state = Some(LoginAddAccountState::weak_handle(&state_rc));
         self.login_view_state = None;

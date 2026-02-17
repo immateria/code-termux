@@ -372,6 +372,10 @@ impl ModelClient {
         &self.config.code_home
     }
 
+    pub fn auth_credentials_store_mode(&self) -> crate::config_types::AuthCredentialsStoreMode {
+        self.config.cli_auth_credentials_store_mode
+    }
+
     pub fn debug_enabled(&self) -> bool {
         self.config.debug
     }
@@ -1482,9 +1486,11 @@ impl ModelClient {
                                     );
                                 }
 
-                                if let Err(err) =
-                                    auth::activate_account(self.code_home(), &next_account_id)
-                                {
+                                if let Err(err) = auth::activate_account_with_store_mode(
+                                    self.code_home(),
+                                    &next_account_id,
+                                    self.auth_credentials_store_mode(),
+                                ) {
                                     tracing::warn!(
                                         from_account_id = %current_account_id,
                                         to_account_id = %next_account_id,
@@ -1852,7 +1858,11 @@ impl ModelClient {
                             to_account_id = %next_account_id,
                             "rate limit hit during compact; auto-switching active account"
                         );
-                        if let Err(err) = auth::activate_account(self.code_home(), &next_account_id) {
+                        if let Err(err) = auth::activate_account_with_store_mode(
+                            self.code_home(),
+                            &next_account_id,
+                            self.auth_credentials_store_mode(),
+                        ) {
                             tracing::warn!(
                                 from_account_id = %current_account_id,
                                 to_account_id = %next_account_id,

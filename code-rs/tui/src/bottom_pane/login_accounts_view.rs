@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::io;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
@@ -7,7 +6,7 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use code_core::auth;
 use code_core::auth_accounts::{self, StoredAccount};
-use code_core::config::{load_config_as_toml, resolve_code_path_for_read, set_account_store_paths};
+use code_core::config::{load_config_as_toml, set_account_store_paths};
 use code_login::AuthMode;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -15,7 +14,6 @@ use ratatui::layout::{Alignment, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
-use std::path::Path;
 use textwrap::Options as TwOptions;
 
 use crate::account_label::{account_display_label, account_mode_priority};
@@ -55,11 +53,13 @@ impl LoginAccountsView {
         code_home: PathBuf,
         app_event_tx: AppEventSender,
         tail_ticket: BackgroundOrderTicket,
+        auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
     ) -> (Self, Rc<RefCell<LoginAccountsState>>) {
         let state = Rc::new(RefCell::new(LoginAccountsState::new(
             code_home,
             app_event_tx,
             tail_ticket,
+            auth_credentials_store_mode,
         )));
         (Self { state: state.clone() }, state)
     }
@@ -192,6 +192,7 @@ pub(crate) struct LoginAccountsState {
     code_home: PathBuf,
     app_event_tx: AppEventSender,
     tail_ticket: BackgroundOrderTicket,
+    auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
     accounts: Vec<AccountRow>,
     active_account_id: Option<String>,
     selected: usize,
@@ -205,11 +206,13 @@ impl LoginAccountsState {
         code_home: PathBuf,
         app_event_tx: AppEventSender,
         tail_ticket: BackgroundOrderTicket,
+        auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
     ) -> Self {
         let mut state = Self {
             code_home,
             app_event_tx,
             tail_ticket,
+            auth_credentials_store_mode,
             accounts: Vec::new(),
             active_account_id: None,
             selected: 0,
@@ -287,18 +290,15 @@ impl LoginAccountsState {
     }
 
     fn sync_account_store_from_auth(&mut self) {
-        // Match core auth loading behavior so account sync can discover auth
-        // in legacy/fallback code-home paths as well.
-        let auth_read_path = resolve_code_path_for_read(&self.code_home, Path::new("auth.json"));
-        let auth_json = match auth::try_read_auth_json(&auth_read_path) {
-            Ok(auth) => auth,
+        let auth_json = match auth::load_auth_dot_json(&self.code_home, self.auth_credentials_store_mode)
+        {
+            Ok(Some(auth)) => auth,
+            Ok(None) => return,
             Err(err) => {
-                if err.kind() != io::ErrorKind::NotFound {
-                    self.feedback = Some(Feedback {
-                        message: format!("Failed to read current auth: {err}"),
-                        is_error: true,
-                    });
-                }
+                self.feedback = Some(Feedback {
+                    message: format!("Failed to read current auth: {err}"),
+                    is_error: true,
+                });
                 return;
             }
         };
@@ -726,7 +726,11 @@ impl LoginAccountsState {
     }
 
     fn activate_account(&mut self, account_id: String, mode: AuthMode) -> bool {
-        match auth::activate_account(&self.code_home, &account_id) {
+        match auth::activate_account_with_store_mode(
+            &self.code_home,
+            &account_id,
+            self.auth_credentials_store_mode,
+        ) {
             Ok(()) => {
                 self.feedback = Some(Feedback {
                     message: if mode.is_chatgpt() {
@@ -759,7 +763,8 @@ impl LoginAccountsState {
                     .as_ref()
                     .is_some_and(|id| id == &account_id);
                 if removed_active {
-                    let _ = auth::logout(&self.code_home);
+                    let _ =
+                        auth::logout_with_store_mode(&self.code_home, self.auth_credentials_store_mode);
                 }
                 self.feedback = Some(Feedback {
                     message: "Account disconnected".to_string(),
@@ -1440,11 +1445,13 @@ impl LoginAddAccountView {
         code_home: PathBuf,
         app_event_tx: AppEventSender,
         tail_ticket: BackgroundOrderTicket,
+        auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
     ) -> (Self, Rc<RefCell<LoginAddAccountState>>) {
         let state = Rc::new(RefCell::new(LoginAddAccountState::new(
             code_home,
             app_event_tx,
             tail_ticket,
+            auth_credentials_store_mode,
         )));
         (Self { state: state.clone() }, state)
     }
@@ -1509,6 +1516,7 @@ pub(crate) struct LoginAddAccountState {
     code_home: PathBuf,
     app_event_tx: AppEventSender,
     tail_ticket: BackgroundOrderTicket,
+    auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
     step: AddStep,
     feedback: Option<Feedback>,
     is_complete: bool,
@@ -1519,11 +1527,13 @@ impl LoginAddAccountState {
         code_home: PathBuf,
         app_event_tx: AppEventSender,
         tail_ticket: BackgroundOrderTicket,
+        auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
     ) -> Self {
         Self {
             code_home,
             app_event_tx,
             tail_ticket,
+            auth_credentials_store_mode,
             step: AddStep::Choose { selected: 0 },
             feedback: None,
             is_complete: false,
@@ -1579,7 +1589,11 @@ impl LoginAddAccountState {
                             is_error: true,
                         });
                     } else {
-                        match auth::login_with_api_key(&self.code_home, &key) {
+                        match auth::login_with_api_key_with_store_mode(
+                            &self.code_home,
+                            &key,
+                            self.auth_credentials_store_mode,
+                        ) {
                             Ok(()) => {
                                 self.feedback = Some(Feedback {
                                     message: "API key connected".to_string(),

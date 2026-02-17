@@ -248,6 +248,7 @@ impl DeviceCodeSession {
             tokens.id_token,
             tokens.access_token,
             tokens.refresh_token,
+            self.opts.cli_auth_credentials_store_mode,
         )
         .await
     }

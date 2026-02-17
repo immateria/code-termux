@@ -18,6 +18,21 @@ use strum_macros::Display;
 
 pub const DEFAULT_OTEL_ENVIRONMENT: &str = "dev";
 
+/// Determine where Code should store CLI auth credentials (the `auth.json` payload).
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthCredentialsStoreMode {
+    #[default]
+    /// Persist credentials in `CODE_HOME/auth.json`.
+    File,
+    /// Persist credentials in an OS-specific keyring service. Fail if unavailable.
+    Keyring,
+    /// Use keyring when available; otherwise, fall back to a file in `CODE_HOME`.
+    Auto,
+    /// Store credentials in memory only for the current process.
+    Ephemeral,
+}
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum OtelHttpProtocol {

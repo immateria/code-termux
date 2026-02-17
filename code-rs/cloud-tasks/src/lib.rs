@@ -201,10 +201,17 @@ pub async fn run_main(cli: Cli, _code_linux_sandbox_exe: Option<PathBuf>) -> any
         let _token = match code_core::config::find_code_home()
             .ok()
             .map(|home| {
+                let auth_credentials_store_mode = code_core::config::Config::load_with_cli_overrides(
+                    Vec::new(),
+                    code_core::config::ConfigOverrides::default(),
+                )
+                .map(|cfg| cfg.cli_auth_credentials_store_mode)
+                .unwrap_or(code_core::auth::AuthCredentialsStoreMode::File);
                 code_login::AuthManager::new(
                     home,
                     code_login::AuthMode::ChatGPT,
                     code_core::default_client::DEFAULT_ORIGINATOR.to_string(),
+                    auth_credentials_store_mode,
                 )
             })
             .and_then(|am| am.auth())
@@ -1538,10 +1545,17 @@ async fn run_submit(args: crate::cli::SubmitArgs) -> anyhow::Result<()> {
         let _token = match code_core::config::find_code_home()
             .ok()
             .map(|home| {
+                let auth_credentials_store_mode = code_core::config::Config::load_with_cli_overrides(
+                    Vec::new(),
+                    code_core::config::ConfigOverrides::default(),
+                )
+                .map(|cfg| cfg.cli_auth_credentials_store_mode)
+                .unwrap_or(code_core::auth::AuthCredentialsStoreMode::File);
                 code_login::AuthManager::new(
                     home,
                     code_login::AuthMode::ChatGPT,
                     code_core::default_client::DEFAULT_ORIGINATOR.to_string(),
+                    auth_credentials_store_mode,
                 )
             })
             .and_then(|am| am.auth())

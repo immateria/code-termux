@@ -7,6 +7,7 @@ use crate::config_types::AutoDriveSettings;
 use crate::config_types::AutoDriveModelRoutingEntry;
 use crate::config_types::AllowedCommand;
 use crate::config_types::AllowedCommandMatchKind;
+use crate::config_types::AuthCredentialsStoreMode;
 use crate::config_types::BrowserConfig;
 use crate::config_types::ClientTools;
 use crate::config_types::Notice;
@@ -389,6 +390,9 @@ pub struct Config {
     /// Directory containing all Codex state (defaults to `~/.code`; can be
     /// overridden by the `CODE_HOME` or `CODEX_HOME` environment variables).
     pub code_home: PathBuf,
+
+    /// Preferred backend for storing CLI auth credentials (for example, keyring vs file).
+    pub cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
 
     /// Settings that govern if and what will be written to `~/.code/history.jsonl`
     /// (Code still reads legacy `~/.codex/history.jsonl`).
@@ -784,6 +788,15 @@ pub struct ConfigToml {
 
     /// If set to `true`, the API key will be signed with the `originator` header.
     pub preferred_auth_method: Option<AuthMode>,
+
+    /// Preferred backend for storing CLI auth credentials.
+    ///
+    /// - `file` (default): Use `CODE_HOME/auth.json`.
+    /// - `keyring`: Use an OS-specific keyring service.
+    /// - `auto`: Use the keyring when available; otherwise fall back to `file`.
+    /// - `ephemeral`: Store credentials in memory only for the current process.
+    #[serde(default)]
+    pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
 
     /// When true, automatically switch to another connected account when the
     /// current account hits a rate/usage limit.
@@ -1223,7 +1236,9 @@ impl Config {
         let env_ctx_v2_flag = *crate::flags::CTX_UI;
 
         // Determine auth mode early so defaults like model selection can depend on it.
-        let using_chatgpt_auth = Self::is_using_chatgpt_auth(&code_home);
+        let cli_auth_credentials_store_mode = cfg.cli_auth_credentials_store.unwrap_or_default();
+        let using_chatgpt_auth =
+            Self::is_using_chatgpt_auth(&code_home, cli_auth_credentials_store_mode);
 
         let auto_switch_accounts_on_rate_limit = config_profile
             .auto_switch_accounts_on_rate_limit
@@ -1593,6 +1608,7 @@ impl Config {
                 })
                 .collect(),
             code_home,
+            cli_auth_credentials_store_mode,
             history,
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
             tui: tui_config.clone(),
@@ -1672,12 +1688,20 @@ impl Config {
     }
 
     /// Check if we're using ChatGPT authentication
-    fn is_using_chatgpt_auth(code_home: &Path) -> bool {
+    fn is_using_chatgpt_auth(
+        code_home: &Path,
+        auth_credentials_store_mode: AuthCredentialsStoreMode,
+    ) -> bool {
         use code_app_server_protocol::AuthMode;
         use crate::CodexAuth;
         
         // Prefer ChatGPT when both ChatGPT tokens and an API key are present.
-        match CodexAuth::from_code_home(code_home, AuthMode::ChatGPT, "code_cli_rs") {
+        match CodexAuth::from_code_home_with_store_mode(
+            code_home,
+            auth_credentials_store_mode,
+            AuthMode::ChatGPT,
+            "code_cli_rs",
+        ) {
             Ok(Some(auth)) => auth.mode.is_chatgpt(),
             _ => false,
         }

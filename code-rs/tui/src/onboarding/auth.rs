@@ -2,6 +2,7 @@ use code_login::CLIENT_ID;
 use code_login::ServerOptions;
 use code_login::ShutdownHandle;
 use code_login::run_login_server;
+use code_core::auth::AuthCredentialsStoreMode;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
@@ -345,10 +346,16 @@ impl AuthModeWidget {
         }
 
         self.error = None;
+        let cli_auth_credentials_store_mode = self
+            .chat_widget_args
+            .lock()
+            .map(|args| args.config.cli_auth_credentials_store_mode)
+            .unwrap_or(AuthCredentialsStoreMode::File);
         let opts = ServerOptions::new(
             self.code_home.clone(),
             CLIENT_ID.to_string(),
             code_core::default_client::DEFAULT_ORIGINATOR.to_string(),
+            cli_auth_credentials_store_mode,
         );
         let server = run_login_server(opts);
         match server {

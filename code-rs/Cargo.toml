@@ -19,6 +19,7 @@ members = [
     "execpolicy",
     "file-search",
     "git-tooling",
+    "keyring-store",
     "linux-sandbox",
     "login",
     "mcp-client",
@@ -75,6 +76,7 @@ code-utils-image = { path = "utils/image", package = "codex-utils-image" }
 code-exec = { path = "exec" }
 code-file-search = { path = "file-search" }
 code-git-tooling = { path = "git-tooling" }
+code-keyring-store = { path = "keyring-store" }
 code-git-apply = { path = "git-apply" }
 code-linux-sandbox = { path = "linux-sandbox" }
 code-login = { path = "login" }
@@ -135,6 +137,7 @@ indexmap = "2.6.0"
 insta = "1.43.2"
 inventory = "0.3"
 itertools = "0.14.0"
+keyring = { version = "3.6", default-features = false }
 landlock = "0.4.1"
 lazy_static = "1"
 libc = "0.2.175"

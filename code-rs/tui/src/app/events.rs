@@ -2106,6 +2106,7 @@ impl App<'_> {
                             self.config.code_home.clone(),
                             code_login::CLIENT_ID.to_string(),
                             self.config.responses_originator_header.clone(),
+                            self.config.cli_auth_credentials_store_mode,
                         );
 
                         match code_login::run_login_server(opts) {
@@ -2151,6 +2152,7 @@ impl App<'_> {
                             self.config.code_home.clone(),
                             code_login::CLIENT_ID.to_string(),
                             self.config.responses_originator_header.clone(),
+                            self.config.cli_auth_credentials_store_mode,
                         );
                         let tx = self.app_event_tx.clone();
                         let join_handle = tokio::spawn(async move {
@@ -2382,6 +2384,7 @@ impl App<'_> {
                             cfg.code_home.clone(),
                             AuthMode::ApiKey,
                             cfg.responses_originator_header.clone(),
+                            cfg.cli_auth_credentials_store_mode,
                         );
                         let mut new_widget =
                             ChatWidget::new_from_existing(crate::chatwidget::ForkedChatWidgetInit {

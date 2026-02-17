@@ -119,6 +119,7 @@ fn run_refresh(
                         auth,
                         config.code_home.clone(),
                         config.responses_originator_header.clone(),
+                        config.cli_auth_credentials_store_mode,
                     ),
                     Some(account),
                 )
@@ -134,6 +135,7 @@ fn run_refresh(
                         config.code_home.clone(),
                         auth_mode,
                         config.responses_originator_header.clone(),
+                        config.cli_auth_credentials_store_mode,
                     ),
                     None,
                 )

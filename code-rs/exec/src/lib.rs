@@ -477,6 +477,7 @@ pub async fn run_main(cli: Cli, code_linux_sandbox_exe: Option<PathBuf>) -> anyh
         config.code_home.clone(),
         code_app_server_protocol::AuthMode::ApiKey,
         config.responses_originator_header.clone(),
+        config.cli_auth_credentials_store_mode,
     );
     let conversation_manager = ConversationManager::new(auth_manager.clone(), SessionSource::Exec);
 

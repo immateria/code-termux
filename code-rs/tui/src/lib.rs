@@ -1279,7 +1279,12 @@ pub enum LoginStatus {
 /// Determine current login status based on auth.json presence.
 pub fn get_login_status(config: &Config) -> LoginStatus {
     let code_home = config.code_home.clone();
-    match CodexAuth::from_code_home(&code_home, AuthMode::ChatGPT, &config.responses_originator_header) {
+    match CodexAuth::from_code_home_with_store_mode(
+        &code_home,
+        config.cli_auth_credentials_store_mode,
+        AuthMode::ChatGPT,
+        &config.responses_originator_header,
+    ) {
         Ok(Some(auth)) => LoginStatus::AuthMode(auth.mode),
         _ => LoginStatus::NotAuthenticated,
     }

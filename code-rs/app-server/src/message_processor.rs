@@ -83,6 +83,7 @@ impl MessageProcessor {
             config.code_home.clone(),
             AuthMode::ApiKey,
             config.responses_originator_header.clone(),
+            config.cli_auth_credentials_store_mode,
         );
         let conversation_manager = Arc::new(ConversationManager::new(
             auth_manager.clone(),

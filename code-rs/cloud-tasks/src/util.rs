@@ -264,10 +264,17 @@ pub async fn build_chatgpt_headers() -> HeaderMap {
         HeaderValue::from_str(&ua).unwrap_or(HeaderValue::from_static("codex-cli")),
     );
     if let Ok(home) = code_core::config::find_code_home() {
+        let auth_credentials_store_mode = code_core::config::Config::load_with_cli_overrides(
+            Vec::new(),
+            code_core::config::ConfigOverrides::default(),
+        )
+        .map(|cfg| cfg.cli_auth_credentials_store_mode)
+        .unwrap_or(code_core::auth::AuthCredentialsStoreMode::File);
         let am = code_login::AuthManager::new(
             home,
             code_login::AuthMode::ChatGPT,
             code_core::default_client::DEFAULT_ORIGINATOR.to_string(),
+            auth_credentials_store_mode,
         );
         if let Some(auth) = am.auth()
             && let Ok(tok) = auth.get_token().await

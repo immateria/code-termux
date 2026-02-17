@@ -42,6 +42,7 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
         config.code_home.clone(),
         code_login::AuthMode::ApiKey,
         config.responses_originator_header.clone(),
+        config.cli_auth_credentials_store_mode,
     );
     let conversation_manager = ConversationManager::new(auth_manager.clone(), SessionSource::Cli);
     let NewConversation {

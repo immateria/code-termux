@@ -199,6 +199,7 @@ pub(crate) fn select_next_account_id(
 
 pub fn switch_active_account_on_rate_limit(
     code_home: &Path,
+    auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
     state: &mut RateLimitSwitchState,
     allow_api_key_fallback: bool,
     now: DateTime<Utc>,
@@ -217,7 +218,7 @@ pub fn switch_active_account_on_rate_limit(
     )?;
 
     if let Some(next_account_id) = next_account_id.as_deref() {
-        auth::activate_account(code_home, next_account_id)?;
+        auth::activate_account_with_store_mode(code_home, next_account_id, auth_credentials_store_mode)?;
     }
 
     Ok(next_account_id)
@@ -444,6 +445,7 @@ mod tests {
         let now = fixed_now();
         let next = switch_active_account_on_rate_limit(
             home.path(),
+            auth::AuthCredentialsStoreMode::File,
             &mut state,
             false,
             now,

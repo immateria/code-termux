@@ -2432,6 +2432,7 @@ async fn run_turn(
                                 .unwrap_or(AppAuthMode::ApiKey);
                             match crate::account_switching::switch_active_account_on_rate_limit(
                                 sess.client.code_home(),
+                                sess.client.auth_credentials_store_mode(),
                                 &mut rate_limit_switch_state,
                                 sess.client.api_key_fallback_on_all_accounts_limited(),
                                 now,

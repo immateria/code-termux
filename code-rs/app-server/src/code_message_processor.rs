@@ -344,7 +344,11 @@ impl CodexMessageProcessor {
                     });
                 }
 
-                if let Err(err) = code_core::auth::login_with_api_key(&self.config.code_home, api_key) {
+                if let Err(err) = code_core::auth::login_with_api_key_with_store_mode(
+                    &self.config.code_home,
+                    api_key,
+                    self.config.cli_auth_credentials_store_mode,
+                ) {
                     return Err(JSONRPCErrorError {
                         code: INTERNAL_ERROR_CODE,
                         message: format!("failed to persist api key: {err}"),
@@ -384,6 +388,7 @@ impl CodexMessageProcessor {
             self.config.code_home.clone(),
             CLIENT_ID.to_string(),
             self.config.responses_originator_header.clone(),
+            self.config.cli_auth_credentials_store_mode,
         );
         options.open_browser = false;
 
@@ -1075,7 +1080,11 @@ impl CodexMessageProcessor {
             return;
         }
 
-        if let Err(err) = code_core::auth::login_with_api_key(&self.config.code_home, api_key) {
+        if let Err(err) = code_core::auth::login_with_api_key_with_store_mode(
+            &self.config.code_home,
+            api_key,
+            self.config.cli_auth_credentials_store_mode,
+        ) {
             let error = JSONRPCErrorError {
                 code: INTERNAL_ERROR_CODE,
                 message: format!("failed to persist api key: {err}"),
@@ -1911,6 +1920,7 @@ mod tests {
             config.code_home.clone(),
             AuthMode::ApiKey,
             config.responses_originator_header.clone(),
+            config.cli_auth_credentials_store_mode,
         );
         let conversation_manager = Arc::new(ConversationManager::new(
             auth_manager.clone(),

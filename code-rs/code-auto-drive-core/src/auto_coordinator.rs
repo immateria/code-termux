@@ -1940,6 +1940,7 @@ fn run_auto_loop(inputs: AutoLoopInputs) -> Result<()> {
         code_home,
         preferred_auth,
         responses_originator_header,
+        config.cli_auth_credentials_store_mode,
     );
     let auth_mode_for_model_access = auth_mgr
         .auth()
@@ -3631,6 +3632,7 @@ fn classify_model_error_with_auto_switch(
                         if let Some(current_auth_mode) = current_auth_mode {
                             match switch_active_account_on_rate_limit(
                                 client.code_home(),
+                                client.auth_credentials_store_mode(),
                                 state,
                                 client.api_key_fallback_on_all_accounts_limited(),
                                 now,

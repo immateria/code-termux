@@ -310,6 +310,7 @@ fn run_guided_loop(runtime: &tokio::runtime::Runtime, args: GuidedLoopArgs<'_>) 
         cfg.code_home.clone(),
         preferred_auth,
         cfg.responses_originator_header.clone(),
+        cfg.cli_auth_credentials_store_mode,
     );
     let debug_logger = DebugLogger::new(debug_enabled)
         .or_else(|_| DebugLogger::new(false))

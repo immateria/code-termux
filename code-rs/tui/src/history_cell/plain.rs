@@ -895,11 +895,11 @@ pub(crate) fn new_status_output(
         use code_login::AuthMode;
         use code_login::CodexAuth;
         use code_login::OPENAI_API_KEY_ENV_VAR;
-        use code_login::try_read_auth_json;
 
         // Determine effective auth mode the core would choose
-        let auth_result = CodexAuth::from_code_home(
+        let auth_result = CodexAuth::from_code_home_with_store_mode(
             &config.code_home,
+            config.cli_auth_credentials_store_mode,
             AuthMode::ChatGPT,
             &config.responses_originator_header,
         );
@@ -908,13 +908,16 @@ pub(crate) fn new_status_output(
             Ok(Some(auth)) => match auth.mode {
                 AuthMode::ApiKey => {
                     // Prefer suffix from auth.json; fall back to env var if needed
-                    let suffix =
-                        try_read_auth_json(&code_login::get_auth_file(&config.code_home))
-                            .ok()
-                            .and_then(|a| a.openai_api_key)
-                            .or_else(|| std::env::var(OPENAI_API_KEY_ENV_VAR).ok())
-                            .map(|k| key_suffix(&k))
-                            .unwrap_or_else(|| "????".to_string());
+                    let suffix = code_core::auth::load_auth_dot_json(
+                        &config.code_home,
+                        config.cli_auth_credentials_store_mode,
+                    )
+                    .ok()
+                    .flatten()
+                    .and_then(|a| a.openai_api_key)
+                    .or_else(|| std::env::var(OPENAI_API_KEY_ENV_VAR).ok())
+                    .map(|k| key_suffix(&k))
+                    .unwrap_or_else(|| "????".to_string());
                     lines.push(Line::from(format!("  • Method: API key (…{suffix})")));
                 }
                 AuthMode::ChatGPT | AuthMode::ChatgptAuthTokens => {

@@ -15,8 +15,9 @@ use crate::pkce::generate_pkce;
 use base64::Engine;
 use chrono::Utc;
 use code_app_server_protocol::AuthMode;
+use code_core::auth::AuthCredentialsStoreMode;
 use code_core::auth::AuthDotJson;
-use code_core::auth::get_auth_file;
+use code_core::auth::save_auth;
 use code_core::token_data::TokenData;
 use code_core::token_data::parse_id_token;
 use rand::RngCore;
@@ -38,10 +39,16 @@ pub struct ServerOptions {
     pub open_browser: bool,
     pub force_state: Option<String>,
     pub originator: String,
+    pub cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
 }
 
 impl ServerOptions {
-    pub fn new(code_home: PathBuf, client_id: String, originator: String) -> Self {
+    pub fn new(
+        code_home: PathBuf,
+        client_id: String,
+        originator: String,
+        cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
+    ) -> Self {
         Self {
             code_home,
             client_id,
@@ -50,6 +57,7 @@ impl ServerOptions {
             open_browser: true,
             force_state: None,
             originator,
+            cli_auth_credentials_store_mode,
         }
     }
 }
@@ -258,6 +266,7 @@ async fn process_request(
                         tokens.id_token.clone(),
                         tokens.access_token.clone(),
                         tokens.refresh_token.clone(),
+                        opts.cli_auth_credentials_store_mode,
                     )
                     .await
                     {
@@ -470,16 +479,11 @@ pub(crate) async fn persist_tokens_async(
     id_token: String,
     access_token: String,
     refresh_token: String,
+    auth_credentials_store_mode: AuthCredentialsStoreMode,
 ) -> io::Result<()> {
     // Reuse existing synchronous logic but run it off the async runtime.
     let code_home = code_home.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let auth_file = get_auth_file(&code_home);
-        if let Some(parent) = auth_file.parent()
-            && !parent.exists() {
-                std::fs::create_dir_all(parent).map_err(io::Error::other)?;
-            }
-
         let mut tokens = TokenData {
             id_token: parse_id_token(&id_token).map_err(io::Error::other)?,
             access_token,
@@ -500,7 +504,7 @@ pub(crate) async fn persist_tokens_async(
             tokens: Some(tokens),
             last_refresh: Some(last_refresh),
         };
-        code_core::auth::write_auth_json(&auth_file, &auth)?;
+        save_auth(&code_home, &auth, auth_credentials_store_mode)?;
         let email_for_store = tokens_for_store.id_token.email.clone();
         let _ = code_core::auth_accounts::upsert_chatgpt_account(
             &code_home,

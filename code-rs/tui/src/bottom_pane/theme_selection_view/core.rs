@@ -729,6 +729,7 @@ impl ThemeSelectionView {
                     cfg.code_home.clone(),
                     preferred_auth,
                     cfg.responses_originator_header.clone(),
+                    cfg.cli_auth_credentials_store_mode,
                 );
                 let debug_logger = match code_core::debug_logger::DebugLogger::new(true) {
                     Ok(logger) => logger,
@@ -1098,6 +1099,7 @@ impl ThemeSelectionView {
                     cfg.code_home.clone(),
                     AuthMode::ApiKey,
                     cfg.responses_originator_header.clone(),
+                    cfg.cli_auth_credentials_store_mode,
                 );
                 let debug_logger = match code_core::debug_logger::DebugLogger::new(false) {
                     Ok(logger) => logger,
