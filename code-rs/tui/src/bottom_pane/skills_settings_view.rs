@@ -1844,13 +1844,27 @@ impl SkillsSettingsView {
             .unwrap_or_default();
 
         let mut document_body = strip_frontmatter(&body);
+        let extra_frontmatter = extract_frontmatter(&body)
+            .map(|frontmatter| {
+                filter_frontmatter_excluding_keys(
+                    frontmatter.as_str(),
+                    &["name", "description", "shell_style"],
+                )
+            })
+            .unwrap_or_default();
         if !trigger_examples.is_empty() && !document_body.contains("## Trigger Examples") {
             document_body.push_str("\n\n## Trigger Examples\n\n");
             document_body.push_str(&trigger_examples);
             document_body.push('\n');
         }
 
-        let body = compose_skill_document(&name, &description, &shell_style, &document_body);
+        let body = compose_skill_document(
+            &name,
+            &description,
+            &shell_style,
+            &extra_frontmatter,
+            &document_body,
+        );
         if let Err(msg) = self.validate_frontmatter(&body) {
             self.status = Some((msg, Style::default().fg(colors::error())));
             return;
@@ -2106,7 +2120,13 @@ fn yaml_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn compose_skill_document(name: &str, description: &str, shell_style: &str, body: &str) -> String {
+fn compose_skill_document(
+    name: &str,
+    description: &str,
+    shell_style: &str,
+    extra_frontmatter: &str,
+    body: &str,
+) -> String {
     let escaped_name = yaml_escape(name);
     let escaped_description = yaml_escape(description);
     let mut header = format!(
@@ -2117,6 +2137,11 @@ fn compose_skill_document(name: &str, description: &str, shell_style: &str, body
         let escaped_style = yaml_escape(shell_style);
         header.push_str(&format!("shell_style: \"{escaped_style}\"\n"));
     }
+    let extra_frontmatter = extra_frontmatter.trim();
+    if !extra_frontmatter.is_empty() {
+        header.push_str(extra_frontmatter.trim_end_matches('\n'));
+        header.push('\n');
+    }
     header.push_str("---\n\n");
 
     let body = body.trim_start_matches('\n');
@@ -2125,6 +2150,45 @@ fn compose_skill_document(name: &str, description: &str, shell_style: &str, body
     } else {
         format!("{header}{body}")
     }
+}
+
+fn filter_frontmatter_excluding_keys(frontmatter: &str, excluded_keys: &[&str]) -> String {
+    if excluded_keys.is_empty() {
+        return frontmatter.to_string();
+    }
+
+    let mut out: Vec<&str> = Vec::new();
+    let lines: Vec<&str> = frontmatter.lines().collect();
+    let mut idx = 0;
+    while idx < lines.len() {
+        let line = lines[idx];
+        let is_top_level = !line.starts_with(|c: char| c.is_whitespace());
+        if is_top_level {
+            let trimmed = line.trim_start();
+            let matches_excluded = excluded_keys.iter().any(|key| {
+                let needle = format!("{key}:");
+                trimmed.starts_with(needle.as_str())
+            });
+            if matches_excluded {
+                idx += 1;
+                // Skip continuation lines for multi-line / nested values (indented or blank).
+                while idx < lines.len() {
+                    let next = lines[idx];
+                    if next.trim().is_empty() || next.starts_with(|c: char| c.is_whitespace()) {
+                        idx += 1;
+                        continue;
+                    }
+                    break;
+                }
+                continue;
+            }
+        }
+
+        out.push(line);
+        idx += 1;
+    }
+
+    out.join("\n")
 }
 
 fn frontmatter_value(body: &str, key: &str) -> Option<String> {
