@@ -1,5 +1,3 @@
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
@@ -16,6 +14,7 @@ use tracing::warn;
 
 use crate::config::resolve_code_path_for_read;
 use crate::config_types::AuthCredentialsStoreMode;
+use crate::keyring_keys::store_key_for_code_home;
 use code_keyring_store::DefaultKeyringStore;
 use code_keyring_store::KeyringStore;
 use once_cell::sync::Lazy;
@@ -109,17 +108,8 @@ impl AuthStorageBackend for FileAuthStorage {
 
 const KEYRING_SERVICE: &str = "Codex Auth";
 
-fn compute_store_key(code_home: &Path) -> std::io::Result<String> {
-    let canonical = code_home
-        .canonicalize()
-        .unwrap_or_else(|_| code_home.to_path_buf());
-    let path_str = canonical.to_string_lossy();
-    let mut hasher = Sha256::new();
-    hasher.update(path_str.as_bytes());
-    let digest = hasher.finalize();
-    let hex = format!("{digest:x}");
-    let truncated = hex.get(..16).unwrap_or(&hex);
-    Ok(format!("cli|{truncated}"))
+fn compute_store_key(code_home: &Path) -> String {
+    store_key_for_code_home("cli", code_home)
 }
 
 #[derive(Clone, Debug)]
@@ -165,12 +155,12 @@ impl KeyringAuthStorage {
 
 impl AuthStorageBackend for KeyringAuthStorage {
     fn load(&self) -> std::io::Result<Option<AuthDotJson>> {
-        let key = compute_store_key(&self.code_home)?;
+        let key = compute_store_key(&self.code_home);
         self.load_from_keyring(&key)
     }
 
     fn save(&self, auth: &AuthDotJson) -> std::io::Result<()> {
-        let key = compute_store_key(&self.code_home)?;
+        let key = compute_store_key(&self.code_home);
         let serialized = serde_json::to_string(auth).map_err(std::io::Error::other)?;
         self.save_to_keyring(&key, &serialized)?;
         if let Err(err) = delete_auth_files_if_exists(&self.code_home) {
@@ -180,7 +170,7 @@ impl AuthStorageBackend for KeyringAuthStorage {
     }
 
     fn delete(&self) -> std::io::Result<bool> {
-        let key = compute_store_key(&self.code_home)?;
+        let key = compute_store_key(&self.code_home);
         let keyring_removed = self
             .keyring_store
             .delete(KEYRING_SERVICE, &key)
@@ -252,7 +242,7 @@ impl EphemeralAuthStorage {
     where
         F: FnOnce(&mut HashMap<String, AuthDotJson>, String) -> std::io::Result<T>,
     {
-        let key = compute_store_key(&self.code_home)?;
+        let key = compute_store_key(&self.code_home);
         let mut store = EPHEMERAL_AUTH_STORE
             .lock()
             .map_err(|_| std::io::Error::other("failed to lock ephemeral auth storage"))?;
@@ -406,7 +396,7 @@ mod tests {
             Arc::new(mock_keyring.clone()),
         );
         let expected = auth_with_prefix("load");
-        let key = compute_store_key(code_home.path())?;
+        let key = compute_store_key(code_home.path());
         let serialized = serde_json::to_string(&expected)?;
         mock_keyring.save(KEYRING_SERVICE, &key, &serialized)?;
 
@@ -424,7 +414,7 @@ mod tests {
             Arc::new(mock_keyring.clone()),
         ));
 
-        let key = compute_store_key(code_home.path())?;
+        let key = compute_store_key(code_home.path());
         let fallback = get_auth_file(code_home.path());
         std::fs::write(&fallback, "stale")?;
 
@@ -444,7 +434,7 @@ mod tests {
     fn auto_storage_load_falls_back_when_keyring_errors() -> anyhow::Result<()> {
         let code_home = tempdir()?;
         let mock_keyring = MockKeyringStore::default();
-        let key = compute_store_key(code_home.path())?;
+        let key = compute_store_key(code_home.path());
         mock_keyring.set_error(
             &key,
             KeyringError::NoStorageAccess(Box::new(std::io::Error::new(

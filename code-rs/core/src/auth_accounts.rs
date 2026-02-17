@@ -1,19 +1,28 @@
 use chrono::{DateTime, Utc};
 use code_app_server_protocol::AuthMode;
+use code_keyring_store::DefaultKeyringStore;
+use code_keyring_store::KeyringStore;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::Mutex;
 use uuid::Uuid;
 
+use crate::config_types::AuthCredentialsStoreMode;
+use crate::keyring_keys::store_key_for_code_home;
 use crate::token_data::TokenData;
 
 const ACCOUNTS_FILE_NAME: &str = "auth_accounts.json";
 const ACCOUNTS_CONFIG_TABLE: &str = "accounts";
 const ACCOUNTS_READ_PATHS_KEY: &str = "read_paths";
 const ACCOUNTS_WRITE_PATH_KEY: &str = "write_path";
+const KEYRING_SERVICE: &str = "Codex Auth Accounts";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StoredAccount {
@@ -145,6 +154,282 @@ fn account_store_paths(code_home: &Path) -> AccountStorePaths {
     let mut seen = HashSet::new();
     paths.read_paths.retain(|path| seen.insert(path.clone()));
     paths
+}
+
+fn accounts_store_key(code_home: &Path) -> String {
+    store_key_for_code_home("cli-accounts", code_home)
+}
+
+fn configured_auth_credentials_store_mode(code_home: &Path) -> Option<AuthCredentialsStoreMode> {
+    let root = match crate::config::load_config_as_toml(code_home) {
+        Ok(value) => value,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            tracing::warn!(
+                "failed to read config while resolving auth credentials store mode: {err}"
+            );
+            return None;
+        }
+    };
+
+    let raw = root
+        .get("cli_auth_credentials_store")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    match raw.to_ascii_lowercase().as_str() {
+        "file" => Some(AuthCredentialsStoreMode::File),
+        "keyring" => Some(AuthCredentialsStoreMode::Keyring),
+        "auto" => Some(AuthCredentialsStoreMode::Auto),
+        "ephemeral" => Some(AuthCredentialsStoreMode::Ephemeral),
+        other => {
+            tracing::warn!("unknown cli_auth_credentials_store value '{other}', using default");
+            None
+        }
+    }
+}
+
+fn auth_credentials_store_mode(code_home: &Path) -> AuthCredentialsStoreMode {
+    configured_auth_credentials_store_mode(code_home).unwrap_or_default()
+}
+
+trait AccountsStorageBackend: Send + Sync {
+    fn load(&self) -> io::Result<AccountsFile>;
+    fn save(&self, data: &AccountsFile) -> io::Result<()>;
+}
+
+#[derive(Clone)]
+struct FileAccountsStorage {
+    paths: AccountStorePaths,
+}
+
+impl FileAccountsStorage {
+    fn new(paths: AccountStorePaths) -> Self {
+        Self { paths }
+    }
+}
+
+impl AccountsStorageBackend for FileAccountsStorage {
+    fn load(&self) -> io::Result<AccountsFile> {
+        load_accounts_file(&self.paths)
+    }
+
+    fn save(&self, data: &AccountsFile) -> io::Result<()> {
+        write_accounts_file(&self.paths.write_path, data)
+    }
+}
+
+fn delete_file_if_exists(path: &Path) -> io::Result<bool> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+fn delete_accounts_files_if_exists(code_home: &Path, paths: &AccountStorePaths) -> io::Result<bool> {
+    let legacy_path =
+        crate::config::resolve_code_path_for_read(code_home, Path::new(ACCOUNTS_FILE_NAME));
+
+    let mut removed = delete_file_if_exists(&paths.write_path)?;
+    if legacy_path != paths.write_path {
+        removed |= delete_file_if_exists(&legacy_path)?;
+    }
+    Ok(removed)
+}
+
+#[derive(Clone)]
+struct KeyringAccountsStorage {
+    code_home: PathBuf,
+    paths: AccountStorePaths,
+    keyring_store: Arc<dyn KeyringStore>,
+}
+
+impl KeyringAccountsStorage {
+    fn new(code_home: PathBuf, paths: AccountStorePaths, keyring_store: Arc<dyn KeyringStore>) -> Self {
+        Self {
+            code_home,
+            paths,
+            keyring_store,
+        }
+    }
+
+    fn load_from_keyring(&self, key: &str) -> io::Result<Option<AccountsFile>> {
+        match self.keyring_store.load(KEYRING_SERVICE, key) {
+            Ok(Some(serialized)) => serde_json::from_str(&serialized)
+                .map(Some)
+                .map_err(|err| std::io::Error::other(format!(
+                    "failed to deserialize accounts from keyring: {err}"
+                ))),
+            Ok(None) => Ok(None),
+            Err(error) => Err(std::io::Error::other(format!(
+                "failed to load accounts from keyring: {}",
+                error.message()
+            ))),
+        }
+    }
+
+    fn save_to_keyring(&self, key: &str, value: &str) -> io::Result<()> {
+        match self.keyring_store.save(KEYRING_SERVICE, key, value) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(std::io::Error::other(format!(
+                "failed to save accounts to keyring: {}",
+                error.message()
+            ))),
+        }
+    }
+}
+
+impl AccountsStorageBackend for KeyringAccountsStorage {
+    fn load(&self) -> io::Result<AccountsFile> {
+        let key = accounts_store_key(&self.code_home);
+        Ok(self.load_from_keyring(&key)?.unwrap_or_default())
+    }
+
+    fn save(&self, data: &AccountsFile) -> io::Result<()> {
+        let key = accounts_store_key(&self.code_home);
+        let serialized = serde_json::to_string(data).map_err(std::io::Error::other)?;
+        self.save_to_keyring(&key, &serialized)?;
+        if let Err(error) = delete_accounts_files_if_exists(&self.code_home, &self.paths) {
+            tracing::warn!("failed to remove auth accounts fallback file: {error}");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct AutoAccountsStorage {
+    keyring_storage: Arc<KeyringAccountsStorage>,
+    file_storage: Arc<FileAccountsStorage>,
+}
+
+impl AutoAccountsStorage {
+    fn new(code_home: PathBuf, paths: AccountStorePaths, keyring_store: Arc<dyn KeyringStore>) -> Self {
+        Self {
+            keyring_storage: Arc::new(KeyringAccountsStorage::new(
+                code_home,
+                paths.clone(),
+                keyring_store,
+            )),
+            file_storage: Arc::new(FileAccountsStorage::new(paths)),
+        }
+    }
+}
+
+impl AccountsStorageBackend for AutoAccountsStorage {
+    fn load(&self) -> io::Result<AccountsFile> {
+        let key = accounts_store_key(&self.keyring_storage.code_home);
+        match self.keyring_storage.load_from_keyring(&key) {
+            Ok(Some(data)) => Ok(data),
+            Ok(None) => self.file_storage.load(),
+            Err(error) => {
+                tracing::warn!(
+                    "failed to load accounts from keyring, falling back to file: {error}"
+                );
+                self.file_storage.load()
+            }
+        }
+    }
+
+    fn save(&self, data: &AccountsFile) -> io::Result<()> {
+        match self.keyring_storage.save(data) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                tracing::warn!(
+                    "failed to save accounts to keyring, falling back to file: {error}"
+                );
+                self.file_storage.save(data)
+            }
+        }
+    }
+}
+
+static EPHEMERAL_ACCOUNTS_STORE: Lazy<Mutex<HashMap<String, AccountsFile>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Clone)]
+struct EphemeralAccountsStorage {
+    code_home: PathBuf,
+    paths: AccountStorePaths,
+}
+
+impl EphemeralAccountsStorage {
+    fn new(code_home: PathBuf, paths: AccountStorePaths) -> Self {
+        Self { code_home, paths }
+    }
+
+    fn with_store<F, T>(&self, action: F) -> io::Result<T>
+    where
+        F: FnOnce(&mut HashMap<String, AccountsFile>, String) -> io::Result<T>,
+    {
+        let key = accounts_store_key(&self.code_home);
+        let mut store = EPHEMERAL_ACCOUNTS_STORE
+            .lock()
+            .map_err(|_| io::Error::other("failed to lock ephemeral accounts storage"))?;
+        action(&mut store, key)
+    }
+}
+
+impl AccountsStorageBackend for EphemeralAccountsStorage {
+    fn load(&self) -> io::Result<AccountsFile> {
+        self.with_store(|store, key| Ok(store.get(&key).cloned().unwrap_or_default()))
+    }
+
+    fn save(&self, data: &AccountsFile) -> io::Result<()> {
+        self.with_store(|store, key| {
+            store.insert(key, data.clone());
+            Ok(())
+        })?;
+        if let Err(error) = delete_accounts_files_if_exists(&self.code_home, &self.paths) {
+            tracing::warn!("failed to remove auth accounts fallback file: {error}");
+        }
+        Ok(())
+    }
+}
+
+fn accounts_storage_with_mode(
+    code_home: &Path,
+    mode: AuthCredentialsStoreMode,
+) -> Arc<dyn AccountsStorageBackend> {
+    let paths = account_store_paths(code_home);
+    match mode {
+        AuthCredentialsStoreMode::File => Arc::new(FileAccountsStorage::new(paths)),
+        AuthCredentialsStoreMode::Keyring => Arc::new(KeyringAccountsStorage::new(
+            code_home.to_path_buf(),
+            paths,
+            Arc::new(DefaultKeyringStore),
+        )),
+        AuthCredentialsStoreMode::Auto => Arc::new(AutoAccountsStorage::new(
+            code_home.to_path_buf(),
+            paths,
+            Arc::new(DefaultKeyringStore),
+        )),
+        AuthCredentialsStoreMode::Ephemeral => Arc::new(EphemeralAccountsStorage::new(
+            code_home.to_path_buf(),
+            paths,
+        )),
+    }
+}
+
+fn accounts_storage(code_home: &Path) -> Arc<dyn AccountsStorageBackend> {
+    accounts_storage_with_mode(code_home, auth_credentials_store_mode(code_home))
+}
+
+pub fn migrate_accounts_store_mode(
+    code_home: &Path,
+    from: AuthCredentialsStoreMode,
+    to: AuthCredentialsStoreMode,
+) -> io::Result<()> {
+    if from == to {
+        return Ok(());
+    }
+
+    let from_storage = accounts_storage_with_mode(code_home, from);
+    let to_storage = accounts_storage_with_mode(code_home, to);
+    let data = from_storage.load()?;
+    to_storage.save(&data)?;
+    Ok(())
 }
 
 fn read_accounts_file(path: &Path) -> io::Result<Option<AccountsFile>> {
@@ -286,20 +571,20 @@ fn upsert_account(mut data: AccountsFile, mut new_account: StoredAccount) -> (Ac
 }
 
 pub fn list_accounts(code_home: &Path) -> io::Result<Vec<StoredAccount>> {
-    let paths = account_store_paths(code_home);
-    let data = load_accounts_file(&paths)?;
+    let storage = accounts_storage(code_home);
+    let data = storage.load()?;
     Ok(data.accounts)
 }
 
 pub fn get_active_account_id(code_home: &Path) -> io::Result<Option<String>> {
-    let paths = account_store_paths(code_home);
-    let data = load_accounts_file(&paths)?;
+    let storage = accounts_storage(code_home);
+    let data = storage.load()?;
     Ok(data.active_account_id)
 }
 
 pub fn find_account(code_home: &Path, account_id: &str) -> io::Result<Option<StoredAccount>> {
-    let paths = account_store_paths(code_home);
-    let data = load_accounts_file(&paths)?;
+    let storage = accounts_storage(code_home);
+    let data = storage.load()?;
     Ok(data
         .accounts
         .into_iter()
@@ -310,29 +595,28 @@ pub fn set_active_account_id(
     code_home: &Path,
     account_id: Option<String>,
 ) -> io::Result<Option<StoredAccount>> {
-    let paths = account_store_paths(code_home);
-    let mut data = load_accounts_file(&paths)?;
+    let storage = accounts_storage(code_home);
+    let mut data = storage.load()?;
 
     data.active_account_id = account_id.clone();
 
-    if let Some(id) = account_id {
-        if let Some(account) = data.accounts.iter_mut().find(|acc| acc.id == id) {
-            touch_account(account, true);
-            let updated = account.clone();
-            write_accounts_file(&paths.write_path, &data)?;
-            return Ok(Some(updated));
-        }
-        write_accounts_file(&paths.write_path, &data)?;
-        Ok(None)
-    } else {
-        write_accounts_file(&paths.write_path, &data)?;
-        Ok(None)
-    }
+    let updated = account_id.and_then(|id| {
+        data.accounts
+            .iter_mut()
+            .find(|account| account.id == id)
+            .map(|account| {
+                touch_account(account, true);
+                account.clone()
+            })
+    });
+
+    storage.save(&data)?;
+    Ok(updated)
 }
 
 pub fn remove_account(code_home: &Path, account_id: &str) -> io::Result<Option<StoredAccount>> {
-    let paths = account_store_paths(code_home);
-    let mut data = load_accounts_file(&paths)?;
+    let storage = accounts_storage(code_home);
+    let mut data = storage.load()?;
 
     let removed = if let Some(pos) = data.accounts.iter().position(|acc| acc.id == account_id) {
         Some(data.accounts.remove(pos))
@@ -348,7 +632,7 @@ pub fn remove_account(code_home: &Path, account_id: &str) -> io::Result<Option<S
         data.active_account_id = None;
     }
 
-    write_accounts_file(&paths.write_path, &data)?;
+    storage.save(&data)?;
     Ok(removed)
 }
 
@@ -358,8 +642,8 @@ pub fn upsert_api_key_account(
     label: Option<String>,
     make_active: bool,
 ) -> io::Result<StoredAccount> {
-    let paths = account_store_paths(code_home);
-    let data = load_accounts_file(&paths)?;
+    let storage = accounts_storage(code_home);
+    let data = storage.load()?;
 
     let new_account = StoredAccount {
         id: next_id(),
@@ -386,7 +670,7 @@ pub fn upsert_api_key_account(
         }
     }
 
-    write_accounts_file(&paths.write_path, &data)?;
+    storage.save(&data)?;
     Ok(stored)
 }
 
@@ -397,8 +681,8 @@ pub fn upsert_chatgpt_account(
     label: Option<String>,
     make_active: bool,
 ) -> io::Result<StoredAccount> {
-    let paths = account_store_paths(code_home);
-    let data = load_accounts_file(&paths)?;
+    let storage = accounts_storage(code_home);
+    let data = storage.load()?;
 
     let new_account = StoredAccount {
         id: next_id(),
@@ -425,7 +709,7 @@ pub fn upsert_chatgpt_account(
         }
     }
 
-    write_accounts_file(&paths.write_path, &data)?;
+    storage.save(&data)?;
     Ok(stored)
 }
 

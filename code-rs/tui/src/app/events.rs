@@ -933,6 +933,11 @@ impl App<'_> {
                                         )? {
                                             code_core::auth::save_auth(&code_home, &auth, mode)?;
                                         }
+                                        code_core::auth_accounts::migrate_accounts_store_mode(
+                                            &code_home,
+                                            old_mode,
+                                            mode,
+                                        )?;
                                         Ok(())
                                     }
                                 })
