@@ -12,6 +12,9 @@ use code_core::config::load_global_mcp_servers;
 use code_core::config::write_global_mcp_servers;
 use code_core::config_types::McpServerConfig;
 use code_core::config_types::McpServerTransportConfig;
+use code_rmcp_client::delete_oauth_tokens;
+use code_rmcp_client::perform_oauth_login;
+use code_rmcp_client::supports_oauth_login;
 
 /// Subcommands:
 /// - `serve`  — run the MCP server on stdio
@@ -19,6 +22,8 @@ use code_core::config_types::McpServerTransportConfig;
 /// - `get`    — show a single server (with `--json`)
 /// - `add`    — add a server launcher entry to `~/.code/config.toml` (Code also reads legacy `~/.codex/config.toml`)
 /// - `remove` — delete a server entry
+/// - `login`  — authenticate with MCP server using OAuth
+/// - `logout` — remove OAuth credentials for MCP server
 #[derive(Debug, clap::Parser)]
 pub struct McpCli {
     #[clap(flatten)]
@@ -37,6 +42,10 @@ pub enum McpSubcommand {
     Add(AddArgs),
 
     Remove(RemoveArgs),
+
+    Login(LoginArgs),
+
+    Logout(LogoutArgs),
 }
 
 #[derive(Debug, clap::Parser)]
@@ -62,20 +71,22 @@ pub struct AddArgs {
     pub name: String,
 
     /// URL of a remote MCP server.
-    ///
-    /// When `--bearer-token` is omitted, Code records the server as a stdio
-    /// launcher using `npx -y mcp-remote <url>` so the MCP server can handle
-    /// OAuth flows.
     #[arg(long)]
     pub url: Option<String>,
 
     /// Optional bearer token to use with `--url` for static authentication.
-    ///
-    /// When set, Code records the server as a `streamable_http` MCP server.
     #[arg(long)]
     pub bearer_token: Option<String>,
 
+    /// Optional environment variable to read for a bearer token.
+    ///
+    /// Only valid with `--url`.
+    #[arg(long = "bearer-token-env-var", value_name = "ENV_VAR")]
+    pub bearer_token_env_var: Option<String>,
+
     /// Environment variables to set when launching the server.
+    ///
+    /// Only valid with stdio servers.
     #[arg(long, value_parser = parse_env_pair, value_name = "KEY=VALUE")]
     pub env: Vec<(String, String)>,
 
@@ -87,6 +98,22 @@ pub struct AddArgs {
 #[derive(Debug, clap::Parser)]
 pub struct RemoveArgs {
     /// Name of the MCP server configuration to remove.
+    pub name: String,
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct LoginArgs {
+    /// Name of the MCP server to authenticate with OAuth.
+    pub name: String,
+
+    /// Comma-separated list of OAuth scopes to request.
+    #[arg(long, value_delimiter = ',', value_name = "SCOPE,SCOPE")]
+    pub scopes: Vec<String>,
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct LogoutArgs {
+    /// Name of the MCP server to deauthenticate.
     pub name: String,
 }
 
@@ -105,10 +132,16 @@ impl McpCli {
                 run_get(&config_overrides, args)?;
             }
             McpSubcommand::Add(args) => {
-                run_add(&config_overrides, args)?;
+                run_add(&config_overrides, args).await?;
             }
             McpSubcommand::Remove(args) => {
                 run_remove(&config_overrides, args)?;
+            }
+            McpSubcommand::Login(args) => {
+                run_login(&config_overrides, args).await?;
+            }
+            McpSubcommand::Logout(args) => {
+                run_logout(&config_overrides, args).await?;
             }
         }
 
@@ -119,6 +152,7 @@ impl McpCli {
 fn build_mcp_transport_for_add(
     url: Option<String>,
     bearer_token: Option<String>,
+    bearer_token_env_var: Option<String>,
     env: Option<HashMap<String, String>>,
     command: Vec<String>,
 ) -> Result<McpServerTransportConfig> {
@@ -126,24 +160,23 @@ fn build_mcp_transport_for_add(
         if !command.is_empty() {
             bail!("--url cannot be combined with a command");
         }
-        if let Some(bearer_token) = bearer_token {
-            return Ok(McpServerTransportConfig::StreamableHttp {
-                url,
-                bearer_token: Some(bearer_token),
-                bearer_token_env_var: None,
-                http_headers: None,
-                env_http_headers: None,
-            });
+        if env.is_some() {
+            bail!("--env is only supported for stdio servers");
         }
-        return Ok(McpServerTransportConfig::Stdio {
-            command: "npx".to_string(),
-            args: vec!["-y".to_string(), "mcp-remote".to_string(), url],
-            env,
+        if bearer_token.is_some() && bearer_token_env_var.is_some() {
+            bail!("--bearer-token cannot be combined with --bearer-token-env-var");
+        }
+        return Ok(McpServerTransportConfig::StreamableHttp {
+            url,
+            bearer_token,
+            bearer_token_env_var,
+            http_headers: None,
+            env_http_headers: None,
         });
     }
 
-    if bearer_token.is_some() {
-        bail!("--bearer-token requires --url");
+    if bearer_token.is_some() || bearer_token_env_var.is_some() {
+        bail!("--bearer-token and --bearer-token-env-var require --url");
     }
 
     let mut command_parts = command.into_iter();
@@ -158,14 +191,17 @@ fn build_mcp_transport_for_add(
     })
 }
 
-fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<()> {
+async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<()> {
     // Validate any provided overrides even though they are not currently applied.
-    config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
+    let overrides = config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
+    let config = Config::load_with_cli_overrides(overrides, ConfigOverrides::default())
+        .context("failed to load configuration")?;
 
     let AddArgs {
         name,
         url,
         bearer_token,
+        bearer_token_env_var,
         env,
         command,
     } = add_args;
@@ -182,14 +218,15 @@ fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<(
         Some(map)
     };
 
-    let code_home = find_code_home().context("failed to resolve CODEX_HOME")?;
+    let code_home = config.code_home.clone();
     let mut servers = load_global_mcp_servers(&code_home)
         .with_context(|| format!("failed to load MCP servers from {}", code_home.display()))?;
 
-    let transport = build_mcp_transport_for_add(url, bearer_token, env_map, command)?;
+    let transport =
+        build_mcp_transport_for_add(url, bearer_token, bearer_token_env_var, env_map, command)?;
 
     let new_entry = McpServerConfig {
-        transport,
+        transport: transport.clone(),
         startup_timeout_sec: None,
         tool_timeout_sec: None,
         disabled_tools: Vec::new(),
@@ -202,6 +239,39 @@ fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<(
 
     println!("Added global MCP server '{name}'.");
 
+    if let McpServerTransportConfig::StreamableHttp {
+        url,
+        bearer_token,
+        bearer_token_env_var,
+        http_headers,
+        env_http_headers,
+    } = &transport
+        && bearer_token.is_none()
+        && bearer_token_env_var.is_none()
+    {
+        match supports_oauth_login(url).await {
+            Ok(true) => {
+                println!("Detected OAuth support. Starting OAuth flow…");
+                perform_oauth_login(
+                    &code_home,
+                    &name,
+                    url,
+                    config.mcp_oauth_credentials_store_mode,
+                    http_headers.clone(),
+                    env_http_headers.clone(),
+                    &[],
+                    config.mcp_oauth_callback_port,
+                )
+                .await?;
+                println!("Successfully logged in.");
+            }
+            Ok(false) => {}
+            Err(_) => println!(
+                "MCP server may or may not require login. Run `codex mcp login {name}` to login."
+            ),
+        }
+    }
+
     Ok(())
 }
 
@@ -210,9 +280,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn add_with_url_defaults_to_mcp_remote() {
+    fn add_with_url_defaults_to_streamable_http() {
         let transport = build_mcp_transport_for_add(
             Some("https://mcp.example.com/mcp".to_string()),
+            None,
             None,
             None,
             Vec::new(),
@@ -220,14 +291,17 @@ mod tests {
         .expect("transport");
 
         match transport {
-            McpServerTransportConfig::Stdio { command, args, env } => {
-                assert_eq!(command, "npx");
-                assert_eq!(args[0], "-y");
-                assert_eq!(args[1], "mcp-remote");
-                assert_eq!(args[2], "https://mcp.example.com/mcp");
-                assert!(env.is_none());
+            McpServerTransportConfig::StreamableHttp {
+                url,
+                bearer_token,
+                bearer_token_env_var,
+                ..
+            } => {
+                assert_eq!(url, "https://mcp.example.com/mcp");
+                assert!(bearer_token.is_none());
+                assert!(bearer_token_env_var.is_none());
             }
-            _ => panic!("expected stdio transport"),
+            _ => panic!("expected streamable http transport"),
         }
     }
 
@@ -237,6 +311,7 @@ mod tests {
             Some("https://mcp.example.com/mcp".to_string()),
             Some("token".to_string()),
             None,
+            None,
             Vec::new(),
         )
         .expect("transport");
@@ -245,6 +320,32 @@ mod tests {
             McpServerTransportConfig::StreamableHttp { url, bearer_token, .. } => {
                 assert_eq!(url, "https://mcp.example.com/mcp");
                 assert_eq!(bearer_token.as_deref(), Some("token"));
+            }
+            _ => panic!("expected streamable http transport"),
+        }
+    }
+
+    #[test]
+    fn add_with_url_and_bearer_token_env_var_uses_streamable_http() {
+        let transport = build_mcp_transport_for_add(
+            Some("https://mcp.example.com/mcp".to_string()),
+            None,
+            Some("MCP_BEARER_TOKEN".to_string()),
+            None,
+            Vec::new(),
+        )
+        .expect("transport");
+
+        match transport {
+            McpServerTransportConfig::StreamableHttp {
+                url,
+                bearer_token,
+                bearer_token_env_var,
+                ..
+            } => {
+                assert_eq!(url, "https://mcp.example.com/mcp");
+                assert!(bearer_token.is_none());
+                assert_eq!(bearer_token_env_var.as_deref(), Some("MCP_BEARER_TOKEN"));
             }
             _ => panic!("expected streamable http transport"),
         }
@@ -273,6 +374,87 @@ fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveArgs) ->
         println!("Removed global MCP server '{name}'.");
     } else {
         println!("No MCP server named '{name}' found.");
+    }
+
+    Ok(())
+}
+
+async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs) -> Result<()> {
+    let overrides = config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
+    let config = Config::load_with_cli_overrides(overrides, ConfigOverrides::default())
+        .context("failed to load configuration")?;
+
+    let LoginArgs { name, scopes } = login_args;
+
+    let Some(server) = config.mcp_servers.get(&name) else {
+        bail!("No MCP server named '{name}' found.");
+    };
+
+    let (url, bearer_token, bearer_token_env_var, http_headers, env_http_headers) =
+        match &server.transport {
+            McpServerTransportConfig::StreamableHttp {
+                url,
+                bearer_token,
+                bearer_token_env_var,
+                http_headers,
+                env_http_headers,
+            } => (
+                url.clone(),
+                bearer_token.as_deref(),
+                bearer_token_env_var.as_deref(),
+                http_headers.clone(),
+                env_http_headers.clone(),
+            ),
+            _ => bail!("OAuth login is only supported for streamable HTTP servers."),
+        };
+
+    if bearer_token.is_some() || bearer_token_env_var.is_some() {
+        bail!(
+            "OAuth login is not supported when a bearer token is configured. Remove bearer_token/bearer_token_env_var from the server config first."
+        );
+    }
+
+    perform_oauth_login(
+        &config.code_home,
+        &name,
+        &url,
+        config.mcp_oauth_credentials_store_mode,
+        http_headers,
+        env_http_headers,
+        &scopes,
+        config.mcp_oauth_callback_port,
+    )
+    .await?;
+
+    println!("Successfully logged in to MCP server '{name}'.");
+    Ok(())
+}
+
+async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutArgs) -> Result<()> {
+    let overrides = config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
+    let config = Config::load_with_cli_overrides(overrides, ConfigOverrides::default())
+        .context("failed to load configuration")?;
+
+    let LogoutArgs { name } = logout_args;
+
+    let server = config.mcp_servers.get(&name).ok_or_else(|| {
+        anyhow!("No MCP server named '{name}' found in configuration.")
+    })?;
+
+    let url = match &server.transport {
+        McpServerTransportConfig::StreamableHttp { url, .. } => url.clone(),
+        _ => bail!("OAuth logout is only supported for streamable_http transports."),
+    };
+
+    match delete_oauth_tokens(
+        &config.code_home,
+        &name,
+        &url,
+        config.mcp_oauth_credentials_store_mode,
+    ) {
+        Ok(true) => println!("Removed OAuth credentials for '{name}'."),
+        Ok(false) => println!("No OAuth credentials stored for '{name}'."),
+        Err(err) => return Err(anyhow!("failed to delete OAuth credentials: {err}")),
     }
 
     Ok(())

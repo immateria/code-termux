@@ -1257,6 +1257,7 @@ dependencies = [
  "code-protocol",
  "code-protocol-ts",
  "code-responses-api-proxy",
+ "code-rmcp-client",
  "code-tui",
  "code-version",
  "ctor 0.5.0",
