@@ -1,4 +1,5 @@
 use code_core::config_types::AutoDriveModelRoutingEntry;
+use code_core::config_types::AuthCredentialsStoreMode;
 use code_core::config_types::ReasoningEffort;
 use code_core::config_types::ShellConfig;
 use code_core::config_types::TextVerbosity;
@@ -715,6 +716,18 @@ pub(crate) enum AppEvent {
     SetAutoUpgradeEnabled(bool),
     SetAutoSwitchAccountsOnRateLimit(bool),
     SetApiKeyFallbackOnAllAccountsLimited(bool),
+    RequestSetAuthCredentialsStoreMode {
+        mode: AuthCredentialsStoreMode,
+        migrate_existing: bool,
+    },
+    AuthCredentialsStoreModeApplied {
+        mode: AuthCredentialsStoreMode,
+        using_chatgpt_auth: bool,
+    },
+    AuthCredentialsStoreModeApplyFailed {
+        mode: AuthCredentialsStoreMode,
+        error: String,
+    },
     RequestAgentInstall { name: String, selected_index: usize },
     AgentsOverviewSelectionChanged { index: usize },
     /// Add or update an agent's settings (enabled, params, instructions)

@@ -12,6 +12,7 @@ use crossterm::SynchronizedUpdate;
 
 use code_cloud_tasks_client::{CloudTaskError, TaskId};
 use code_core::config::add_project_allowed_command;
+use code_core::config_types::AuthCredentialsStoreMode;
 use code_core::config_types::Notifications;
 #[cfg(debug_assertions)]
 use code_core::protocol::Event;
@@ -43,6 +44,15 @@ use super::state::{
     BACKPRESSURE_FORCED_DRAW_SKIPS,
     HIGH_EVENT_BURST_MAX,
 };
+
+fn auth_credentials_store_mode_label(mode: AuthCredentialsStoreMode) -> &'static str {
+    match mode {
+        AuthCredentialsStoreMode::File => "file",
+        AuthCredentialsStoreMode::Keyring => "keyring",
+        AuthCredentialsStoreMode::Auto => "auto",
+        AuthCredentialsStoreMode::Ephemeral => "ephemeral",
+    }
+}
 
 impl App<'_> {
     fn handle_login_mode_change(&mut self, using_chatgpt_auth: bool) {
@@ -882,6 +892,129 @@ impl App<'_> {
                         widget.set_api_key_fallback_on_all_accounts_limited(enabled);
                     }
                     self.config.api_key_fallback_on_all_accounts_limited = enabled;
+                }
+                AppEvent::RequestSetAuthCredentialsStoreMode { mode, migrate_existing } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        let label = auth_credentials_store_mode_label(mode);
+                        widget.flash_footer_notice(format!(
+                            "Applying credential store: {label}…"
+                        ));
+                    }
+
+                    let code_home = self.config.code_home.clone();
+                    let old_mode = self.config.cli_auth_credentials_store_mode;
+                    let auth_manager = self._server.auth_manager();
+                    let tx = self.app_event_tx.clone();
+                    tokio::spawn(async move {
+                        let result: Result<bool, String> = async {
+                            if mode == AuthCredentialsStoreMode::Keyring {
+                                tokio::task::spawn_blocking({
+                                    let code_home = code_home.clone();
+                                    move || {
+                                        code_core::auth::load_auth_dot_json(
+                                            &code_home,
+                                            AuthCredentialsStoreMode::Keyring,
+                                        )
+                                        .map(|_| ())
+                                    }
+                                })
+                                .await
+                                .map_err(|err| format!("keyring validation task failed: {err}"))?
+                                .map_err(|err| err.to_string())?;
+                            }
+
+                            if migrate_existing {
+                                tokio::task::spawn_blocking({
+                                    let code_home = code_home.clone();
+                                    move || -> std::io::Result<()> {
+                                        if let Some(auth) = code_core::auth::load_auth_dot_json(
+                                            &code_home,
+                                            old_mode,
+                                        )? {
+                                            code_core::auth::save_auth(&code_home, &auth, mode)?;
+                                        }
+                                        Ok(())
+                                    }
+                                })
+                                .await
+                                .map_err(|err| format!("migration task failed: {err}"))?
+                                .map_err(|err| err.to_string())?;
+                            }
+
+                            code_core::config_edit::persist_root_overrides(
+                                &code_home,
+                                &[(
+                                    &["cli_auth_credentials_store"],
+                                    auth_credentials_store_mode_label(mode),
+                                )],
+                            )
+                            .await
+                            .map_err(|err| err.to_string())?;
+
+                            let using_chatgpt_auth = tokio::task::spawn_blocking({
+                                let auth_manager = auth_manager.clone();
+                                move || {
+                                    auth_manager.set_auth_credentials_store_mode(mode);
+                                    auth_manager.reload();
+                                    auth_manager
+                                        .auth()
+                                        .is_some_and(|auth| auth.mode.is_chatgpt())
+                                }
+                            })
+                            .await
+                            .map_err(|err| format!("auth reload task failed: {err}"))?;
+
+                            Ok(using_chatgpt_auth)
+                        }
+                        .await;
+
+                        match result {
+                            Ok(using_chatgpt_auth) => {
+                                tx.send(AppEvent::AuthCredentialsStoreModeApplied {
+                                    mode,
+                                    using_chatgpt_auth,
+                                });
+                            }
+                            Err(error) => {
+                                tx.send(AppEvent::AuthCredentialsStoreModeApplyFailed {
+                                    mode,
+                                    error,
+                                });
+                            }
+                        }
+                    });
+                }
+                AppEvent::AuthCredentialsStoreModeApplied { mode, using_chatgpt_auth } => {
+                    self.config.cli_auth_credentials_store_mode = mode;
+
+                    let changed_using_chatgpt =
+                        self.config.using_chatgpt_auth != using_chatgpt_auth;
+                    if changed_using_chatgpt {
+                        self.config.using_chatgpt_auth = using_chatgpt_auth;
+                    }
+
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        widget.set_cli_auth_credentials_store_mode(mode);
+                        if changed_using_chatgpt {
+                            widget.set_using_chatgpt_auth(using_chatgpt_auth);
+                        }
+                    }
+
+                    if changed_using_chatgpt {
+                        self.spawn_remote_model_discovery();
+                    }
+
+                    self.schedule_redraw();
+                }
+                AppEvent::AuthCredentialsStoreModeApplyFailed { mode, error } => {
+                    if let AppState::Chat { widget } = &mut self.app_state {
+                        let mode_label = auth_credentials_store_mode_label(mode);
+                        widget.flash_footer_notice(format!(
+                            "Failed to set credential store to {mode_label}: {error}"
+                        ));
+                        widget.refresh_accounts_settings_content();
+                    }
+                    self.schedule_redraw();
                 }
                 AppEvent::ShowAutoDriveSettings => {
                     if let AppState::Chat { widget } = &mut self.app_state {

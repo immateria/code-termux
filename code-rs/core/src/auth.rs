@@ -1524,7 +1524,7 @@ pub struct AuthManager {
     originator: String,
     inner: RwLock<CachedAuth>,
     enable_code_api_key_env: bool,
-    auth_credentials_store_mode: AuthCredentialsStoreMode,
+    auth_credentials_store_mode: RwLock<AuthCredentialsStoreMode>,
 }
 
 impl AuthManager {
@@ -1560,7 +1560,7 @@ impl AuthManager {
                 auth,
             }),
             enable_code_api_key_env: true,
-            auth_credentials_store_mode,
+            auth_credentials_store_mode: RwLock::new(auth_credentials_store_mode),
         }
     }
 
@@ -1576,7 +1576,7 @@ impl AuthManager {
             originator: "code_cli_rs".to_string(),
             inner: RwLock::new(cached),
             enable_code_api_key_env: false,
-            auth_credentials_store_mode: AuthCredentialsStoreMode::File,
+            auth_credentials_store_mode: RwLock::new(AuthCredentialsStoreMode::File),
         })
     }
 
@@ -1595,8 +1595,23 @@ impl AuthManager {
                 auth: Some(auth),
             }),
             enable_code_api_key_env: false,
-            auth_credentials_store_mode,
+            auth_credentials_store_mode: RwLock::new(auth_credentials_store_mode),
         })
+    }
+
+    pub fn auth_credentials_store_mode(&self) -> AuthCredentialsStoreMode {
+        *self
+            .auth_credentials_store_mode
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn set_auth_credentials_store_mode(&self, mode: AuthCredentialsStoreMode) {
+        let mut guard = self
+            .auth_credentials_store_mode
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = mode;
     }
 
     /// Current cached auth (clone). May be `None` if not logged in or load failed.
@@ -1621,6 +1636,7 @@ impl AuthManager {
     /// whether the auth value changed.
     pub fn reload(&self) -> bool {
         let preferred = self.preferred_auth_method();
+        let auth_credentials_store_mode = self.auth_credentials_store_mode();
         let env_auth = if self.enable_code_api_key_env {
             read_code_api_key_from_env().map(|api_key| CodexAuth::from_api_key(&api_key))
         } else {
@@ -1629,7 +1645,7 @@ impl AuthManager {
         let new_auth = env_auth.clone().or_else(|| {
             CodexAuth::from_code_home_with_store_mode(
                 &self.code_home,
-                self.auth_credentials_store_mode,
+                auth_credentials_store_mode,
                 preferred,
                 &self.originator,
             )
@@ -1712,7 +1728,7 @@ impl AuthManager {
     pub fn logout(&self) -> std::io::Result<bool> {
         let removed = super::auth::logout_with_store_mode(
             &self.code_home,
-            self.auth_credentials_store_mode,
+            self.auth_credentials_store_mode(),
         )?;
         // Always reload to clear any cached auth (even if file absent).
         self.reload();

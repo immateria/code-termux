@@ -30,6 +30,18 @@ pub async fn persist_overrides(
     persist_overrides_with_behavior(code_home, profile, &with_options, NoneBehavior::Skip).await
 }
 
+/// Persist overrides into `config.toml` at the document root, ignoring any active
+/// profile. This is intended for settings that must remain global even when a
+/// profile is selected (for example: auth credential storage backend).
+pub async fn persist_root_overrides(code_home: &Path, overrides: &[(&[&str], &str)]) -> Result<()> {
+    let with_options: Vec<(&[&str], Option<&str>)> = overrides
+        .iter()
+        .map(|(segments, value)| (*segments, Some(*value)))
+        .collect();
+
+    persist_root_overrides_with_behavior(code_home, &with_options, NoneBehavior::Skip).await
+}
+
 /// Persist overrides where values may be optional. Any entries with `None`
 /// values are skipped. If all values are `None`, this becomes a no-op and
 /// returns `Ok(())` without touching the file.
@@ -448,6 +460,68 @@ async fn persist_overrides_with_behavior(
         }
     }
     if !mutated { return Ok(()); }
+    let tmp_file = NamedTempFile::new_in(code_home)?;
+    tokio::fs::write(tmp_file.path(), doc.to_string()).await?;
+    tmp_file.persist(config_path)?;
+    Ok(())
+}
+
+async fn persist_root_overrides_with_behavior(
+    code_home: &Path,
+    overrides: &[(&[&str], Option<&str>)],
+    none_behavior: NoneBehavior,
+) -> Result<()> {
+    if overrides.is_empty() {
+        return Ok(());
+    }
+
+    let should_skip = match none_behavior {
+        NoneBehavior::Skip => overrides.iter().all(|(_, value)| value.is_none()),
+        NoneBehavior::Remove => false,
+    };
+
+    if should_skip {
+        return Ok(());
+    }
+
+    let config_path = code_home.join(CONFIG_TOML_FILE);
+    let read_path = resolve_code_path_for_read(code_home, Path::new(CONFIG_TOML_FILE));
+    let read_result = tokio::fs::read_to_string(&read_path).await;
+    let mut doc = match read_result {
+        Ok(contents) => contents.parse::<DocumentMut>()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if overrides.iter().all(|(_, value)| value.is_none() && matches!(none_behavior, NoneBehavior::Remove)) {
+                return Ok(());
+            }
+            tokio::fs::create_dir_all(code_home).await?;
+            DocumentMut::new()
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut mutated = false;
+    for (segments, value) in overrides.iter().copied() {
+        match value {
+            Some(v) => {
+                let trimmed = v.trim();
+                let item_value = match trimmed.parse::<bool>() {
+                    Ok(parsed_bool) => toml_edit::value(parsed_bool),
+                    Err(_) => toml_edit::value(v),
+                };
+                apply_toml_edit_override_segments(&mut doc, segments, item_value);
+                mutated = true;
+            }
+            None => {
+                if matches!(none_behavior, NoneBehavior::Remove) && remove_toml_edit_segments(&mut doc, segments) {
+                    mutated = true;
+                }
+            }
+        }
+    }
+    if !mutated {
+        return Ok(());
+    }
+
     let tmp_file = NamedTempFile::new_in(code_home)?;
     tokio::fs::write(tmp_file.path(), doc.to_string()).await?;
     tmp_file.persist(config_path)?;
@@ -947,6 +1021,60 @@ model_reasoning_effort = "minimal"
 
         // Should not create config.toml on a pure no-op
         assert!(!code_home.join(CONFIG_TOML_FILE).exists());
+    }
+
+    #[tokio::test]
+    async fn persist_root_overrides_writes_top_level_even_when_profile_set() {
+        let tmpdir = tempdir().expect("tmp");
+        let code_home = tmpdir.path();
+
+        let seed = "profile = \"team\"\n";
+        tokio::fs::write(code_home.join(CONFIG_TOML_FILE), seed)
+            .await
+            .expect("seed write");
+
+        persist_root_overrides(code_home, &[(&["cli_auth_credentials_store"], "keyring")])
+            .await
+            .expect("persist");
+
+        let contents = read_config(code_home).await;
+        let parsed: toml::Value = toml::from_str(&contents).expect("valid toml");
+        let table = parsed.as_table().expect("root table");
+        assert_eq!(
+            table
+                .get("cli_auth_credentials_store")
+                .and_then(toml::Value::as_str),
+            Some("keyring")
+        );
+        let profiles = table.get("profiles").and_then(toml::Value::as_table);
+        assert!(
+            profiles
+                .and_then(|p| p.get("team"))
+                .and_then(toml::Value::as_table)
+                .and_then(|t| t.get("cli_auth_credentials_store"))
+                .is_none(),
+            "expected root override to not be nested under profiles"
+        );
+    }
+
+    #[tokio::test]
+    async fn persist_root_overrides_creates_file_when_missing() {
+        let tmpdir = tempdir().expect("tmp");
+        let code_home = tmpdir.path();
+
+        persist_root_overrides(code_home, &[(&["cli_auth_credentials_store"], "file")])
+            .await
+            .expect("persist");
+
+        let contents = read_config(code_home).await;
+        let parsed: toml::Value = toml::from_str(&contents).expect("valid toml");
+        let table = parsed.as_table().expect("root table");
+        assert_eq!(
+            table
+                .get("cli_auth_credentials_store")
+                .and_then(toml::Value::as_str),
+            Some("file")
+        );
     }
 
     /// Verifies entries are written under the specified profile and `None` entries are skipped.

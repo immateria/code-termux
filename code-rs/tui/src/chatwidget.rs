@@ -2826,6 +2826,7 @@ impl ChatWidget<'_> {
             self.app_event_tx.clone(),
             self.config.auto_switch_accounts_on_rate_limit,
             self.config.api_key_fallback_on_all_accounts_limited,
+            self.config.cli_auth_credentials_store_mode,
         )
     }
 
@@ -4678,6 +4679,52 @@ fi\n\
 
         self.refresh_settings_overview_rows();
         self.request_redraw();
+    }
+
+    pub(crate) fn flash_footer_notice(&mut self, text: String) {
+        self.bottom_pane.flash_footer_notice(text);
+        self.request_redraw();
+    }
+
+    pub(crate) fn refresh_accounts_settings_content(&mut self) {
+        let should_refresh_accounts = matches!(
+            self.settings
+                .overlay
+                .as_ref()
+                .map(settings_overlay::SettingsOverlayView::active_section),
+            Some(SettingsSection::Accounts)
+        );
+        if should_refresh_accounts {
+            let content = self.build_accounts_settings_content();
+            if let Some(overlay) = self.settings.overlay.as_mut() {
+                overlay.set_accounts_content(content);
+            }
+        }
+
+        self.refresh_settings_overview_rows();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_cli_auth_credentials_store_mode(
+        &mut self,
+        mode: code_core::config_types::AuthCredentialsStoreMode,
+    ) {
+        if self.config.cli_auth_credentials_store_mode == mode {
+            self.refresh_accounts_settings_content();
+            return;
+        }
+        self.config.cli_auth_credentials_store_mode = mode;
+
+        let label = match mode {
+            code_core::config_types::AuthCredentialsStoreMode::File => "file",
+            code_core::config_types::AuthCredentialsStoreMode::Keyring => "keyring",
+            code_core::config_types::AuthCredentialsStoreMode::Auto => "auto",
+            code_core::config_types::AuthCredentialsStoreMode::Ephemeral => "ephemeral",
+        };
+        self.bottom_pane
+            .flash_footer_notice(format!("Credential store: {label}"));
+
+        self.refresh_accounts_settings_content();
     }
 
     /// Forward file-search results to the bottom pane.

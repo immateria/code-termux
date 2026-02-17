@@ -29,6 +29,7 @@ pub(crate) struct AccountsSettingsContent {
     app_event_tx: AppEventSender,
     auto_switch_enabled: bool,
     api_key_fallback_enabled: bool,
+    auth_credentials_store_mode: code_core::config_types::AuthCredentialsStoreMode,
 }
 
 impl AccountsSettingsContent {
@@ -36,17 +37,20 @@ impl AccountsSettingsContent {
         app_event_tx: AppEventSender,
         auto_switch_enabled: bool,
         api_key_fallback_enabled: bool,
+        auth_credentials_store_mode: code_core::config_types::AuthCredentialsStoreMode,
     ) -> Self {
         let view = AccountSwitchSettingsView::new(
             app_event_tx.clone(),
             auto_switch_enabled,
             api_key_fallback_enabled,
+            auth_credentials_store_mode,
         );
         Self {
             mode: AccountsSubmenuMode::Switch(view),
             app_event_tx,
             auto_switch_enabled,
             api_key_fallback_enabled,
+            auth_credentials_store_mode,
         }
     }
 
@@ -63,6 +67,7 @@ impl AccountsSettingsContent {
             self.app_event_tx.clone(),
             self.auto_switch_enabled,
             self.api_key_fallback_enabled,
+            self.auth_credentials_store_mode,
         ));
     }
 
