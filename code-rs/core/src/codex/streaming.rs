@@ -510,6 +510,11 @@ pub(super) async fn submission_loop(
                     }
                 }
 
+                let session_skills = skills_outcome
+                    .as_ref()
+                    .map(|outcome| strip_skill_contents(outcome.skills.as_slice()))
+                    .unwrap_or_default();
+
                 let computed_user_instructions = get_user_instructions(
                     &updated_config,
                     skills_outcome.as_ref().map(|outcome| outcome.skills.as_slice()),
@@ -824,6 +829,7 @@ pub(super) async fn submission_loop(
                     tx_event: tx_event.clone(),
                     user_instructions: effective_user_instructions.clone(),
                     base_instructions,
+                    skills: tokio::sync::RwLock::new(session_skills),
                     demo_developer_message: demo_developer_message.clone(),
                     compact_prompt_override: config.compact_prompt_override.clone(),
                     approval_policy,
@@ -1429,27 +1435,153 @@ pub(super) async fn submission_loop(
                     }
                 };
 
-                let config_for_skills = Arc::clone(&config);
-                let skill_load_outcome = tokio::task::spawn_blocking(move || {
-                    crate::skills::loader::load_skills(&config_for_skills)
+                let config_snapshot = Arc::clone(&config);
+                let skills_enabled = config_snapshot.skills_enabled;
+                let active_shell_style = sess.user_shell.script_style();
+                let active_shell_style_label =
+                    active_shell_style.map(|style| style.to_string());
+
+                let mut shell_style_skill_filter: Option<HashSet<String>> = None;
+                let mut shell_style_disabled_skills: HashSet<String> = HashSet::new();
+                let mut shell_style_skill_roots: Vec<PathBuf> = Vec::new();
+                if let Some(style) = active_shell_style
+                    && let Some(profile) = config_snapshot.shell_style_profiles.get(&style)
+                {
+                    let requested_skills: HashSet<String> = profile
+                        .skills
+                        .iter()
+                        .map(|name| name.trim().to_ascii_lowercase())
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    if !requested_skills.is_empty() {
+                        shell_style_skill_filter = Some(requested_skills);
+                    }
+
+                    shell_style_disabled_skills.extend(
+                        profile
+                            .disabled_skills
+                            .iter()
+                            .map(|name| name.trim().to_ascii_lowercase())
+                            .filter(|name| !name.is_empty()),
+                    );
+
+                    shell_style_skill_roots.extend(
+                        profile
+                            .skill_roots
+                            .iter()
+                            .cloned()
+                            .filter(|path| !path.as_os_str().is_empty()),
+                    );
+                }
+
+                let inventory = match tokio::task::spawn_blocking(move || {
+                    if !skills_enabled {
+                        return crate::skills::model::SkillLoadOutcome::default();
+                    }
+
+                    if shell_style_skill_roots.is_empty() {
+                        crate::skills::loader::load_skills(config_snapshot.as_ref())
+                    } else {
+                        crate::skills::loader::load_skills_with_additional_roots(
+                            config_snapshot.as_ref(),
+                            shell_style_skill_roots.into_iter(),
+                        )
+                    }
                 })
                 .await
-                .unwrap_or_default();
+                {
+                    Ok(outcome) => outcome,
+                    Err(err) => {
+                        warn!("failed to list skills: {err}");
+                        crate::skills::model::SkillLoadOutcome::default()
+                    }
+                };
 
-                let skills: Vec<code_protocol::skills::Skill> = skill_load_outcome
+                for err in &inventory.errors {
+                    warn!("invalid skill {}: {}", err.path.display(), err.message);
+                }
+
+                // Refresh the active session skill set for per-turn injection.
+                if skills_enabled {
+                    let available_skill_names: HashSet<String> = inventory
+                        .skills
+                        .iter()
+                        .map(|skill| skill.name.trim().to_ascii_lowercase())
+                        .collect();
+
+                    let mut matched_skills: HashSet<String> = HashSet::new();
+                    let mut active_skills: Vec<crate::skills::model::SkillMetadata> = Vec::new();
+                    for skill in &inventory.skills {
+                        let normalized = skill.name.trim().to_ascii_lowercase();
+                        if let Some(skill_filter) = shell_style_skill_filter.as_ref() {
+                            if !skill_filter.contains(&normalized) {
+                                continue;
+                            }
+                            matched_skills.insert(normalized.clone());
+                        }
+
+                        if shell_style_disabled_skills.contains(&normalized) {
+                            continue;
+                        }
+
+                        active_skills.push(crate::skills::model::SkillMetadata {
+                            name: skill.name.clone(),
+                            description: skill.description.clone(),
+                            path: skill.path.clone(),
+                            scope: skill.scope,
+                            content: String::new(),
+                        });
+                    }
+
+                    if let Some(style_label) = active_shell_style_label.as_deref()
+                        && let Some(skill_filter) = shell_style_skill_filter.as_ref()
+                    {
+                        for requested in skill_filter {
+                            if !matched_skills.contains(requested) {
+                                warn!(
+                                    "shell style profile `{style_label}` requested unknown skill `{requested}`"
+                                );
+                            }
+                        }
+                    }
+
+                    if let Some(style_label) = active_shell_style_label.as_deref() {
+                        for requested in &shell_style_disabled_skills {
+                            if !available_skill_names.contains(requested) {
+                                warn!(
+                                    "shell style profile `{style_label}` requested unknown disabled skill `{requested}`"
+                                );
+                            }
+                        }
+                    }
+
+                    *sess.skills.write().await = active_skills;
+                } else {
+                    sess.skills.write().await.clear();
+                }
+
+                let skills: Vec<code_protocol::skills::Skill> = inventory
                     .skills
-                    .into_iter()
+                    .iter()
                     .map(|skill| code_protocol::skills::Skill {
-                        name: skill.name,
-                        description: skill.description,
-                        path: skill.path,
+                        name: skill.name.clone(),
+                        description: skill.description.clone(),
+                        path: skill.path.clone(),
                         scope: match skill.scope {
-                            crate::skills::model::SkillScope::Repo => code_protocol::skills::SkillScope::Repo,
-                            crate::skills::model::SkillScope::User => code_protocol::skills::SkillScope::User,
-                            crate::skills::model::SkillScope::System => code_protocol::skills::SkillScope::System,
-                            crate::skills::model::SkillScope::Admin => code_protocol::skills::SkillScope::System,
+                            crate::skills::model::SkillScope::Repo => {
+                                code_protocol::skills::SkillScope::Repo
+                            }
+                            crate::skills::model::SkillScope::User => {
+                                code_protocol::skills::SkillScope::User
+                            }
+                            crate::skills::model::SkillScope::System => {
+                                code_protocol::skills::SkillScope::System
+                            }
+                            crate::skills::model::SkillScope::Admin => {
+                                code_protocol::skills::SkillScope::System
+                            }
                         },
-                        content: skill.content,
+                        content: skill.content.clone(),
                     })
                     .collect();
 
@@ -2280,6 +2412,22 @@ async fn run_agent(sess: Arc<Session>, turn_context: Arc<TurnContext>, sub_id: S
     }
 }
 
+fn strip_skill_contents(
+    skills: &[crate::skills::model::SkillMetadata],
+) -> Vec<crate::skills::model::SkillMetadata> {
+    let mut out: Vec<crate::skills::model::SkillMetadata> = Vec::with_capacity(skills.len());
+    for skill in skills {
+        out.push(crate::skills::model::SkillMetadata {
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            path: skill.path.clone(),
+            scope: skill.scope,
+            content: String::new(),
+        });
+    }
+    out
+}
+
 async fn run_turn(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -2304,6 +2452,57 @@ async fn run_turn(
     let mut did_auto_compact = false;
     // Attempt input starts as the provided input, and may be augmented with
     // items from a previous dropped stream attempt so we don't lose progress.
+    let mut mention_messages: Vec<String> = Vec::new();
+    for item in initial_user_item.iter().chain(pending_input_tail.iter()) {
+        if let ResponseItem::Message { role, content, .. } = item
+            && role == "user"
+        {
+            for entry in content {
+                if let ContentItem::InputText { text } = entry {
+                    mention_messages.push(text.clone());
+                }
+            }
+        }
+    }
+
+    if !mention_messages.is_empty() {
+        let mention_outcome = {
+            let skills = sess.skills.read().await;
+            if skills.is_empty() {
+                None
+            } else {
+                Some(crate::skills::injection::collect_explicit_skill_mentions(
+                    mention_messages.as_slice(),
+                    skills.as_slice(),
+                ))
+            }
+        };
+
+        if let Some(mention_outcome) = mention_outcome {
+            for warning in mention_outcome.warnings {
+                let event = sess.make_event(
+                    &sub_id,
+                    EventMsg::Warning(crate::protocol::WarningEvent { message: warning }),
+                );
+                sess.send_event(event).await;
+            }
+
+            let injections =
+                crate::skills::injection::build_skill_injections(&mention_outcome.mentioned).await;
+            for warning in injections.warnings {
+                let event = sess.make_event(
+                    &sub_id,
+                    EventMsg::Warning(crate::protocol::WarningEvent { message: warning }),
+                );
+                sess.send_event(event).await;
+            }
+
+            if !injections.items.is_empty() {
+                input.extend(injections.items);
+            }
+        }
+    }
+
     let mut attempt_input: Vec<ResponseItem> = input.clone();
     loop {
         // Each loop iteration corresponds to a single provider HTTP request.

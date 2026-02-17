@@ -335,6 +335,11 @@ pub(crate) struct Session {
     pub(super) cwd: PathBuf,
     pub(super) base_instructions: Option<String>,
     pub(super) user_instructions: Option<String>,
+    /// Skill metadata snapshot resolved for this session (includes style/profile filtering).
+    ///
+    /// Stored behind a lock so we can refresh it when skills are added/edited in the UI
+    /// without requiring a full session reconfigure.
+    pub(super) skills: tokio::sync::RwLock<Vec<crate::skills::model::SkillMetadata>>,
     pub(super) demo_developer_message: Option<String>,
     pub(super) compact_prompt_override: Option<String>,
     pub(super) approval_policy: AskForApproval,

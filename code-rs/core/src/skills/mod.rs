@@ -1,4 +1,5 @@
 pub mod loader;
+pub(crate) mod injection;
 pub mod model;
 pub mod render;
 pub mod system;
