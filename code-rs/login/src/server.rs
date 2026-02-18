@@ -54,7 +54,7 @@ impl ServerOptions {
             client_id,
             issuer: DEFAULT_ISSUER.to_string(),
             port: DEFAULT_PORT,
-            open_browser: true,
+            open_browser: !code_core::env::is_headless_environment(),
             force_state: None,
             originator,
             cli_auth_credentials_store_mode,
