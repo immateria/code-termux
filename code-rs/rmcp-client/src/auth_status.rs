@@ -22,17 +22,31 @@ const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const OAUTH_DISCOVERY_HEADER: &str = "MCP-Protocol-Version";
 const OAUTH_DISCOVERY_VERSION: &str = "2024-11-05";
 
+pub struct StreamableHttpAuthStatusArgs<'a> {
+    pub code_home: &'a Path,
+    pub server_name: &'a str,
+    pub url: &'a str,
+    pub bearer_token: Option<&'a str>,
+    pub bearer_token_env_var: Option<&'a str>,
+    pub http_headers: Option<HashMap<String, String>>,
+    pub env_http_headers: Option<HashMap<String, String>>,
+    pub store_mode: OAuthCredentialsStoreMode,
+}
+
 /// Determine the authentication status for a streamable HTTP MCP server.
 pub async fn determine_streamable_http_auth_status(
-    code_home: &Path,
-    server_name: &str,
-    url: &str,
-    bearer_token: Option<&str>,
-    bearer_token_env_var: Option<&str>,
-    http_headers: Option<HashMap<String, String>>,
-    env_http_headers: Option<HashMap<String, String>>,
-    store_mode: OAuthCredentialsStoreMode,
+    args: StreamableHttpAuthStatusArgs<'_>,
 ) -> Result<McpAuthStatus> {
+    let StreamableHttpAuthStatusArgs {
+        code_home,
+        server_name,
+        url,
+        bearer_token,
+        bearer_token_env_var,
+        http_headers,
+        env_http_headers,
+        store_mode,
+    } = args;
     if bearer_token.is_some() || bearer_token_env_var.is_some() {
         return Ok(McpAuthStatus::BearerToken);
     }
@@ -190,19 +204,19 @@ mod tests {
     #[tokio::test]
     async fn determine_auth_status_uses_bearer_token_when_authorization_header_present() {
         let code_home = tempdir().expect("code home");
-        let status = determine_streamable_http_auth_status(
-            code_home.path(),
-            "server",
-            "not-a-url",
-            None,
-            None,
-            Some(HashMap::from([(
+        let status = determine_streamable_http_auth_status(StreamableHttpAuthStatusArgs {
+            code_home: code_home.path(),
+            server_name: "server",
+            url: "not-a-url",
+            bearer_token: None,
+            bearer_token_env_var: None,
+            http_headers: Some(HashMap::from([(
                 "Authorization".to_string(),
                 "Bearer token".to_string(),
             )])),
-            None,
-            OAuthCredentialsStoreMode::Keyring,
-        )
+            env_http_headers: None,
+            store_mode: OAuthCredentialsStoreMode::Keyring,
+        })
         .await
         .expect("status should compute");
 
@@ -214,19 +228,19 @@ mod tests {
     async fn determine_auth_status_uses_bearer_token_when_env_authorization_header_present() {
         let code_home = tempdir().expect("code home");
         let _guard = EnvVarGuard::set("CODE_RMCP_CLIENT_AUTH_STATUS_TEST_TOKEN", "Bearer token");
-        let status = determine_streamable_http_auth_status(
-            code_home.path(),
-            "server",
-            "not-a-url",
-            None,
-            None,
-            None,
-            Some(HashMap::from([(
+        let status = determine_streamable_http_auth_status(StreamableHttpAuthStatusArgs {
+            code_home: code_home.path(),
+            server_name: "server",
+            url: "not-a-url",
+            bearer_token: None,
+            bearer_token_env_var: None,
+            http_headers: None,
+            env_http_headers: Some(HashMap::from([(
                 "Authorization".to_string(),
                 "CODE_RMCP_CLIENT_AUTH_STATUS_TEST_TOKEN".to_string(),
             )])),
-            OAuthCredentialsStoreMode::Keyring,
-        )
+            store_mode: OAuthCredentialsStoreMode::Keyring,
+        })
         .await
         .expect("status should compute");
 

@@ -25,9 +25,16 @@ use crate::save_oauth_tokens;
 use crate::utils::apply_default_headers;
 use crate::utils::build_default_headers;
 
-struct OauthHeaders {
-    http_headers: Option<HashMap<String, String>>,
-    env_http_headers: Option<HashMap<String, String>>,
+pub struct OauthLoginArgs<'a> {
+    pub code_home: &'a Path,
+    pub server_name: &'a str,
+    pub server_url: &'a str,
+    pub store_mode: OAuthCredentialsStoreMode,
+    pub http_headers: Option<HashMap<String, String>>,
+    pub env_http_headers: Option<HashMap<String, String>>,
+    pub scopes: &'a [String],
+    pub timeout_secs: Option<i64>,
+    pub callback_port: Option<u16>,
 }
 
 struct CallbackServerGuard {
@@ -41,63 +48,15 @@ impl Drop for CallbackServerGuard {
 }
 
 pub async fn perform_oauth_login(
-    code_home: &Path,
-    server_name: &str,
-    server_url: &str,
-    store_mode: OAuthCredentialsStoreMode,
-    http_headers: Option<HashMap<String, String>>,
-    env_http_headers: Option<HashMap<String, String>>,
-    scopes: &[String],
-    callback_port: Option<u16>,
+    args: OauthLoginArgs<'_>,
 ) -> Result<()> {
-    let headers = OauthHeaders {
-        http_headers,
-        env_http_headers,
-    };
-    OauthLoginFlow::new(
-        code_home,
-        server_name,
-        server_url,
-        store_mode,
-        headers,
-        scopes,
-        true,
-        callback_port,
-        None,
-    )
-    .await?
-    .finish()
-    .await
+    OauthLoginFlow::new(args, true).await?.finish().await
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn perform_oauth_login_return_url(
-    code_home: &Path,
-    server_name: &str,
-    server_url: &str,
-    store_mode: OAuthCredentialsStoreMode,
-    http_headers: Option<HashMap<String, String>>,
-    env_http_headers: Option<HashMap<String, String>>,
-    scopes: &[String],
-    timeout_secs: Option<i64>,
-    callback_port: Option<u16>,
+    args: OauthLoginArgs<'_>,
 ) -> Result<OauthLoginHandle> {
-    let headers = OauthHeaders {
-        http_headers,
-        env_http_headers,
-    };
-    let flow = OauthLoginFlow::new(
-        code_home,
-        server_name,
-        server_url,
-        store_mode,
-        headers,
-        scopes,
-        false,
-        callback_port,
-        timeout_secs,
-    )
-    .await?;
+    let flow = OauthLoginFlow::new(args, false).await?;
 
     let authorization_url = flow.authorization_url();
     let completion = flow.spawn();
@@ -246,19 +205,20 @@ fn resolve_callback_port(callback_port: Option<u16>) -> Result<Option<u16>> {
 }
 
 impl OauthLoginFlow {
-    #[allow(clippy::too_many_arguments)]
-    async fn new(
-        code_home: &Path,
-        server_name: &str,
-        server_url: &str,
-        store_mode: OAuthCredentialsStoreMode,
-        headers: OauthHeaders,
-        scopes: &[String],
-        launch_browser: bool,
-        callback_port: Option<u16>,
-        timeout_secs: Option<i64>,
-    ) -> Result<Self> {
+    async fn new(args: OauthLoginArgs<'_>, launch_browser: bool) -> Result<Self> {
         const DEFAULT_OAUTH_TIMEOUT_SECS: i64 = 300;
+
+        let OauthLoginArgs {
+            code_home,
+            server_name,
+            server_url,
+            store_mode,
+            http_headers,
+            env_http_headers,
+            scopes,
+            timeout_secs,
+            callback_port,
+        } = args;
 
         let callback_port = resolve_callback_port(callback_port)?;
         let bind_addr = match callback_port {
@@ -289,10 +249,6 @@ impl OauthLoginFlow {
         let (tx, rx) = oneshot::channel();
         spawn_callback_server(server, tx);
 
-        let OauthHeaders {
-            http_headers,
-            env_http_headers,
-        } = headers;
         let default_headers = build_default_headers(http_headers, env_http_headers)?;
         let http_client = apply_default_headers(ClientBuilder::new(), &default_headers).build()?;
 

@@ -683,14 +683,16 @@ impl McpConnectionManager {
                         http_headers,
                         env_http_headers,
                     } => match code_rmcp_client::determine_streamable_http_auth_status(
-                        &code_home,
-                        &server_name,
-                        &url,
-                        bearer_token.as_deref(),
-                        bearer_token_env_var.as_deref(),
-                        http_headers,
-                        env_http_headers,
-                        store_mode,
+                        code_rmcp_client::StreamableHttpAuthStatusArgs {
+                            code_home: &code_home,
+                            server_name: &server_name,
+                            url: &url,
+                            bearer_token: bearer_token.as_deref(),
+                            bearer_token_env_var: bearer_token_env_var.as_deref(),
+                            http_headers,
+                            env_http_headers,
+                            store_mode,
+                        },
                     )
                     .await
                     {

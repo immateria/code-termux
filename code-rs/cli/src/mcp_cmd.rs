@@ -252,16 +252,17 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
         match supports_oauth_login(url).await {
             Ok(true) => {
                 println!("Detected OAuth support. Starting OAuth flow…");
-                perform_oauth_login(
-                    &code_home,
-                    &name,
-                    url,
-                    config.mcp_oauth_credentials_store_mode,
-                    http_headers.clone(),
-                    env_http_headers.clone(),
-                    &[],
-                    config.mcp_oauth_callback_port,
-                )
+                perform_oauth_login(code_rmcp_client::OauthLoginArgs {
+                    code_home: &code_home,
+                    server_name: &name,
+                    server_url: url,
+                    store_mode: config.mcp_oauth_credentials_store_mode,
+                    http_headers: http_headers.clone(),
+                    env_http_headers: env_http_headers.clone(),
+                    scopes: &[],
+                    timeout_secs: None,
+                    callback_port: config.mcp_oauth_callback_port,
+                })
                 .await?;
                 println!("Successfully logged in.");
             }
@@ -414,16 +415,17 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
         );
     }
 
-    perform_oauth_login(
-        &config.code_home,
-        &name,
-        &url,
-        config.mcp_oauth_credentials_store_mode,
+    perform_oauth_login(code_rmcp_client::OauthLoginArgs {
+        code_home: &config.code_home,
+        server_name: &name,
+        server_url: &url,
+        store_mode: config.mcp_oauth_credentials_store_mode,
         http_headers,
         env_http_headers,
-        &scopes,
-        config.mcp_oauth_callback_port,
-    )
+        scopes: &scopes,
+        timeout_secs: None,
+        callback_port: config.mcp_oauth_callback_port,
+    })
     .await?;
 
     println!("Successfully logged in to MCP server '{name}'.");
