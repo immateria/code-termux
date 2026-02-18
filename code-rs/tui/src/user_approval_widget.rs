@@ -6,8 +6,12 @@
 //! UI to Rust using [`ratatui`]. The goal is feature‑parity for the keyboard
 //! driven workflow – a fully‑fledged visual match is not required.
 
-use std::path::Path;
 use std::path::PathBuf;
+use code_core::command_canonicalization::{
+    canonical_approval_command_kind,
+    canonicalize_command_for_approval,
+    CanonicalApprovalCommandKind,
+};
 use code_core::protocol::Op;
 use code_core::protocol::ReviewDecision;
 use crossterm::event::KeyCode;
@@ -23,7 +27,6 @@ use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
-use shlex::split as shlex_split;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
@@ -436,6 +439,7 @@ fn build_exec_select_options(command: &[String]) -> Vec<SelectOption> {
 
     let normalized_tokens = normalized_command_tokens(command);
     if let Some(tokens) = normalized_tokens.as_ref()
+        && canonical_approval_command_kind(tokens.as_slice()) == CanonicalApprovalCommandKind::Argv
         && let Some(prefix) = prefix_candidate(tokens) {
             let prefix_display = strip_bash_lc_and_escape(&prefix);
             let prefix_with_wildcard = format!("{prefix_display} *");
@@ -497,18 +501,7 @@ fn build_terminal_select_options() -> Vec<SelectOption> {
 }
 
 fn normalized_command_tokens(command: &[String]) -> Option<Vec<String>> {
-    if command.is_empty() {
-        return None;
-    }
-
-    if command.len() == 3 && is_shell_wrapper(&command[0], &command[1]) {
-        if let Some(script_tokens) = shlex_split(&command[2]) {
-            return Some(script_tokens);
-        }
-        return Some(vec![command[2].clone()]);
-    }
-
-    Some(command.to_vec())
+    (!command.is_empty()).then(|| canonicalize_command_for_approval(command))
 }
 
 fn prefix_candidate(tokens: &[String]) -> Option<Vec<String>> {
@@ -542,15 +535,6 @@ fn prefix_candidate(tokens: &[String]) -> Option<Vec<String>> {
     } else {
         None
     }
-}
-
-fn is_shell_wrapper(shell: &str, flag: &str) -> bool {
-    let file_name = Path::new(shell)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(shell)
-        .to_ascii_lowercase();
-    matches!(file_name.as_str(), "bash" | "sh" | "zsh") && matches!(flag, "-lc" | "-c")
 }
 
 fn hotkey_suffix(key: KeyCode) -> String {

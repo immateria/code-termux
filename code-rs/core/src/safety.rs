@@ -245,16 +245,14 @@ pub fn assess_command_safety(
     // would probably be fine to run the command in a sandbox, but when
     // `approved.contains(command)` is `true`, the user may have approved it for
     // the session _because_ they know it needs to run outside a sandbox.
+    let user_explicitly_approved = approved.iter().any(|pattern| pattern.matches(command));
     if is_known_safe_command_with_context_and_rules(
         command,
         safety_config.context,
         safety_config.safe_rules,
     )
-        || approved.iter().any(|pattern| pattern.matches(command))
+        || user_explicitly_approved
     {
-        let user_explicitly_approved = approved
-            .iter()
-            .any(|pattern| pattern.matches(command));
         return SafetyCheck::AutoApprove {
             sandbox_type: SandboxType::None,
             user_explicitly_approved,

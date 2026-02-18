@@ -1876,6 +1876,11 @@ pub fn add_project_allowed_command(
     command: &[String],
     match_kind: ApprovedCommandMatchKind,
 ) -> anyhow::Result<()> {
+    let command = crate::command_canonicalization::normalize_command_for_persistence(command);
+    if command.is_empty() {
+        return Ok(());
+    }
+
     let config_path = code_home.join(CONFIG_TOML_FILE);
     let read_path = resolve_code_path_for_read(code_home, Path::new(CONFIG_TOML_FILE));
     let mut doc = match std::fs::read_to_string(&read_path) {
@@ -1912,7 +1917,7 @@ pub fn add_project_allowed_command(
         .ok_or_else(|| anyhow::anyhow!(format!("failed to create projects.{project_key} table")))?;
 
     let mut argv_array = TomlArray::new();
-    for arg in command {
+    for arg in &command {
         argv_array.push(arg.clone());
     }
 

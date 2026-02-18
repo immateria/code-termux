@@ -35,6 +35,10 @@ impl ApprovedCommandPattern {
         kind: ApprovedCommandMatchKind,
         semantic_prefix: Option<Vec<String>>,
     ) -> Self {
+        let argv = crate::command_canonicalization::canonicalize_command_for_approval(&argv);
+        let semantic_prefix = semantic_prefix.map(|prefix| {
+            crate::command_canonicalization::canonicalize_command_for_approval(&prefix)
+        });
         let semantic_prefix = if matches!(kind, ApprovedCommandMatchKind::Prefix) {
             semantic_prefix.or_else(|| Some(argv.clone()))
         } else {
@@ -48,17 +52,15 @@ impl ApprovedCommandPattern {
     }
 
     pub(crate) fn matches(&self, command: &[String]) -> bool {
+        let canonical = crate::command_canonicalization::canonicalize_command_for_approval(command);
         match self.kind {
-            ApprovedCommandMatchKind::Exact => command == self.argv.as_slice(),
+            ApprovedCommandMatchKind::Exact => canonical == self.argv,
             ApprovedCommandMatchKind::Prefix => {
-                if command.starts_with(&self.argv) {
+                if canonical.starts_with(&self.argv) {
                     return true;
                 }
-                if let (Some(pattern), Some(candidate)) = (
-                    self.semantic_prefix.as_ref(),
-                    semantic_tokens(command),
-                ) {
-                    return candidate.starts_with(pattern);
+                if let Some(pattern) = self.semantic_prefix.as_ref() {
+                    return canonical.starts_with(pattern);
                 }
                 false
             }
@@ -68,38 +70,6 @@ impl ApprovedCommandPattern {
     pub fn argv(&self) -> &[String] { &self.argv }
 
     pub fn kind(&self) -> ApprovedCommandMatchKind { self.kind }
-}
-
-fn semantic_tokens(command: &[String]) -> Option<Vec<String>> {
-    if command.is_empty() {
-        return None;
-    }
-    if let Some(tokens) = shell_script_tokens(command) {
-        return Some(tokens);
-    }
-    Some(command.to_vec())
-}
-
-fn shell_script_tokens(command: &[String]) -> Option<Vec<String>> {
-    if command.len() == 3 && is_shell_wrapper(&command[0], &command[1]) {
-        if let Some(tokens) = shlex_split(&command[2]) {
-            return Some(tokens);
-        }
-        return Some(vec![command[2].clone()]);
-    }
-    None
-}
-
-fn is_shell_wrapper(shell: &str, flag: &str) -> bool {
-    let file_name = Path::new(shell)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(shell)
-        .to_ascii_lowercase();
-    matches!(
-        file_name.as_str(),
-        "bash" | "sh" | "zsh" | "ksh" | "fish" | "dash"
-    ) && matches!(flag, "-lc" | "-c")
 }
 
 #[derive(Clone)]

@@ -26,6 +26,7 @@ mod bridge_client;
 pub mod token_data;
 pub use code_conversation::CodexConversation;
 mod command_safety;
+pub mod command_canonicalization;
 pub mod config;
 mod config_constraint;
 pub mod config_edit;

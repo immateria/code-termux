@@ -73,10 +73,28 @@ pub fn strip_bash_lc_and_escape(command: &[String]) -> String {
             if is_shell_like_executable(first)
                 && (second == "-lc" || second == "-c") =>
         {
-            third.clone()
+            strip_rc_source_wrapper(third)
+                .unwrap_or(third.as_str())
+                .to_string()
         }
         _ => escape_command(command),
     }
+}
+
+fn strip_rc_source_wrapper(script: &str) -> Option<&str> {
+    let trimmed = script.trim();
+    if !trimmed.starts_with("source ") {
+        return None;
+    }
+
+    let start = trimmed.find("&& (")?;
+    let inner_start = start + "&& (".len();
+    let end = trimmed.rfind(')')?;
+    if end <= inner_start {
+        return None;
+    }
+
+    Some(trimmed[inner_start..end].trim())
 }
 
 pub(crate) fn is_shell_like_executable(token: &str) -> bool {

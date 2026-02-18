@@ -11,13 +11,31 @@ pub(crate) fn strip_bash_lc_and_escape(command: &[String]) -> String {
     match command {
         // exactly three items
         [first, second, third]
-            // first two must be "bash", "-lc"
-            if is_bash_like(first) && second == "-lc" =>
+            // first two must be "bash", "-lc" or "bash", "-c"
+            if is_bash_like(first) && (second == "-lc" || second == "-c") =>
         {
-            third.clone()        // borrow `third`
+            strip_rc_source_wrapper(third)
+                .unwrap_or(third.as_str())
+                .to_string()
         }
         _ => escape_command(command),
     }
+}
+
+fn strip_rc_source_wrapper(script: &str) -> Option<&str> {
+    let trimmed = script.trim();
+    if !trimmed.starts_with("source ") {
+        return None;
+    }
+
+    let start = trimmed.find("&& (")?;
+    let inner_start = start + "&& (".len();
+    let end = trimmed.rfind(')')?;
+    if end <= inner_start {
+        return None;
+    }
+
+    Some(trimmed[inner_start..end].trim())
 }
 
 fn is_bash_like(cmd: &str) -> bool {
