@@ -499,7 +499,7 @@ pub fn merge_toml_values(base: &mut TomlValue, overlay: &TomlValue) {
 fn build_cli_overrides_layer(cli_overrides: &[(String, TomlValue)]) -> TomlValue {
     let mut layer = default_empty_table();
     for (path, value) in cli_overrides {
-        if path.is_empty() || path.split('.').any(|segment| segment.is_empty()) {
+        if path.is_empty() || path.split('.').any(str::is_empty) {
             tracing::warn!("Ignoring invalid CLI override path `{path}`");
             continue;
         }

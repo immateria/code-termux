@@ -253,17 +253,17 @@ pub(super) struct AccountUsageContext {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct McpAccessState {
-    pub(super) style: Option<crate::config_types::ShellScriptStyle>,
-    pub(super) style_label: Option<String>,
-    pub(super) style_include_servers: HashSet<String>,
-    pub(super) style_exclude_servers: HashSet<String>,
-    pub(super) session_allow_servers: HashSet<String>,
-    pub(super) session_deny_servers: HashSet<String>,
+pub(crate) struct McpAccessState {
+    pub(crate) style: Option<crate::config_types::ShellScriptStyle>,
+    pub(crate) style_label: Option<String>,
+    pub(crate) style_include_servers: HashSet<String>,
+    pub(crate) style_exclude_servers: HashSet<String>,
+    pub(crate) session_allow_servers: HashSet<String>,
+    pub(crate) session_deny_servers: HashSet<String>,
     /// Per-turn allow list for MCP servers. Only applied when `turn_id` matches
     /// the active turn being processed.
-    pub(super) turn_id: Option<String>,
-    pub(super) turn_allow_servers: HashSet<String>,
+    pub(crate) turn_id: Option<String>,
+    pub(crate) turn_allow_servers: HashSet<String>,
 }
 
 type ScreenshotHashInfo = (PathBuf, Vec<u8>, Vec<u8>);

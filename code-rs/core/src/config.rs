@@ -2836,8 +2836,8 @@ model_verbosity = "high"
     fn auto_drive_model_routing_entries_are_sanitized_on_load() -> std::io::Result<()> {
         let fixture = create_test_fixture()?;
         let mut cfg = fixture.cfg.clone();
-        let mut auto_drive = AutoDriveSettings::default();
-        auto_drive.model_routing_entries = vec![
+        let auto_drive = AutoDriveSettings {
+            model_routing_entries: vec![
             AutoDriveModelRoutingEntry {
                 model: " custom-not-gpt ".to_string(),
                 enabled: true,
@@ -2854,7 +2854,9 @@ model_verbosity = "high"
                 ],
                 description: "  keep me trimmed  ".to_string(),
             },
-        ];
+            ],
+            ..Default::default()
+        };
         cfg.auto_drive = Some(auto_drive);
 
         let overrides = ConfigOverrides {
@@ -2883,9 +2885,9 @@ model_verbosity = "high"
     fn auto_drive_model_routing_enforces_at_least_one_enabled_entry() -> std::io::Result<()> {
         let fixture = create_test_fixture()?;
         let mut cfg = fixture.cfg.clone();
-        let mut auto_drive = AutoDriveSettings::default();
-        auto_drive.model_routing_enabled = true;
-        auto_drive.model_routing_entries = vec![
+        let auto_drive = AutoDriveSettings {
+            model_routing_enabled: true,
+            model_routing_entries: vec![
             AutoDriveModelRoutingEntry {
                 model: "gpt-5.3-codex".to_string(),
                 enabled: false,
@@ -2898,7 +2900,9 @@ model_verbosity = "high"
                 reasoning_levels: vec![ReasoningEffort::High],
                 description: String::new(),
             },
-        ];
+            ],
+            ..Default::default()
+        };
         cfg.auto_drive = Some(auto_drive);
 
         let overrides = ConfigOverrides {
@@ -2926,13 +2930,15 @@ model_verbosity = "high"
     #[test]
     fn set_auto_drive_settings_persists_model_routing_entries() -> anyhow::Result<()> {
         let code_home = TempDir::new()?;
-        let mut settings = AutoDriveSettings::default();
-        settings.model_routing_entries = vec![AutoDriveModelRoutingEntry {
-            model: " GPT-5.3-CODEX-EXPERIMENTAL ".to_string(),
-            enabled: false,
-            reasoning_levels: vec![ReasoningEffort::XHigh, ReasoningEffort::High],
-            description: "  planning-heavy tasks  ".to_string(),
-        }];
+        let settings = AutoDriveSettings {
+            model_routing_entries: vec![AutoDriveModelRoutingEntry {
+                model: " GPT-5.3-CODEX-EXPERIMENTAL ".to_string(),
+                enabled: false,
+                reasoning_levels: vec![ReasoningEffort::XHigh, ReasoningEffort::High],
+                description: "  planning-heavy tasks  ".to_string(),
+            }],
+            ..Default::default()
+        };
 
         set_auto_drive_settings(code_home.path(), &settings, false)?;
 
@@ -2951,8 +2957,10 @@ model_verbosity = "high"
     #[test]
     fn set_auto_drive_settings_removes_model_routing_entries_when_empty() -> anyhow::Result<()> {
         let code_home = TempDir::new()?;
-        let mut settings = AutoDriveSettings::default();
-        settings.model_routing_entries = Vec::new();
+        let settings = AutoDriveSettings {
+            model_routing_entries: Vec::new(),
+            ..Default::default()
+        };
 
         set_auto_drive_settings(code_home.path(), &settings, false)?;
 

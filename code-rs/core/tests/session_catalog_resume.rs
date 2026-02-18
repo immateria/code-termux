@@ -29,6 +29,7 @@ fn write_rollout_transcript(
     let sessions_dir = code_home.join("sessions").join("2025").join("11").join("16");
     fs::create_dir_all(&sessions_dir)?;
 
+    let session_id_str = session_id.to_string();
     let filename = format!(
         "rollout-{}-{}.jsonl",
         created_at.replace(':', "-"),
@@ -37,7 +38,7 @@ fn write_rollout_transcript(
     let path = sessions_dir.join(filename);
 
     let session_meta = SessionMeta {
-        id: ThreadId::from_string(&session_id.to_string()).unwrap(),
+        id: ThreadId::from_string(&session_id_str)?,
         timestamp: created_at.to_string(),
         cwd: cwd.to_path_buf(),
         originator: "test".to_string(),

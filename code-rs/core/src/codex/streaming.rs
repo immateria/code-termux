@@ -1486,8 +1486,8 @@ pub(super) async fn submission_loop(
                         profile
                             .skill_roots
                             .iter()
-                            .cloned()
-                            .filter(|path| !path.as_os_str().is_empty()),
+                            .filter(|path| !path.as_os_str().is_empty())
+                            .cloned(),
                     );
                 }
 
@@ -2445,404 +2445,6 @@ fn strip_skill_contents(
     out
 }
 
-fn mcp_server_allowed_for_turn(
-    mcp_access: &crate::codex::session::McpAccessState,
-    turn_id: &str,
-    server_lower: &str,
-) -> bool {
-    if mcp_access.session_deny_servers.contains(server_lower) {
-        return false;
-    }
-    if mcp_access.turn_id.as_deref() == Some(turn_id)
-        && mcp_access.turn_allow_servers.contains(server_lower)
-    {
-        return true;
-    }
-    if mcp_access.session_allow_servers.contains(server_lower) {
-        return true;
-    }
-    if mcp_access.style_exclude_servers.contains(server_lower) {
-        return false;
-    }
-    if !mcp_access.style_include_servers.is_empty()
-        && !mcp_access.style_include_servers.contains(server_lower)
-    {
-        return false;
-    }
-    true
-}
-
-fn filter_mcp_tools_for_turn(
-    mcp: &crate::mcp_connection_manager::McpConnectionManager,
-    mcp_access: &crate::codex::session::McpAccessState,
-    turn_id: &str,
-) -> HashMap<String, mcp_types::Tool> {
-    let mut out: HashMap<String, mcp_types::Tool> = HashMap::new();
-    for (qualified_name, server_name, tool) in mcp.list_all_tools_with_server_names() {
-        let server_lower = server_name.trim().to_ascii_lowercase();
-        if server_lower.is_empty() {
-            continue;
-        }
-        if !mcp_server_allowed_for_turn(mcp_access, turn_id, &server_lower) {
-            continue;
-        }
-        out.insert(qualified_name, tool);
-    }
-    out
-}
-
-async fn ensure_skill_mcp_access_for_turn(
-    sess: &Arc<Session>,
-    turn_id: &str,
-    config: &crate::config::Config,
-    deps: &[crate::skills::injection::SkillMcpDependency],
-) {
-    use code_protocol::request_user_input::RequestUserInputEvent;
-    use code_protocol::request_user_input::RequestUserInputQuestion;
-    use code_protocol::request_user_input::RequestUserInputQuestionOption;
-
-    if deps.is_empty() {
-        return;
-    }
-
-    let mut config_server_by_lower: HashMap<String, (String, crate::config_types::McpServerConfig)> =
-        HashMap::new();
-    for (server_name, cfg) in &config.mcp_servers {
-        let lower = server_name.trim().to_ascii_lowercase();
-        if lower.is_empty() {
-            continue;
-        }
-        config_server_by_lower
-            .entry(lower)
-            .or_insert_with(|| (server_name.clone(), cfg.clone()));
-    }
-
-    let mut required_by_server: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
-        std::collections::BTreeMap::new();
-    for dep in deps {
-        let server = dep.server.trim().to_ascii_lowercase();
-        if server.is_empty() {
-            continue;
-        }
-        if !config_server_by_lower.contains_key(&server) {
-            continue;
-        }
-        let skill = dep.skill_name.trim();
-        if skill.is_empty() {
-            continue;
-        }
-        required_by_server
-            .entry(server)
-            .or_default()
-            .insert(skill.to_string());
-    }
-
-    if required_by_server.is_empty() {
-        return;
-    }
-
-    for (server_lower, skills) in required_by_server {
-        let (server_name, cfg) = match config_server_by_lower.get(&server_lower) {
-            Some((name, cfg)) => (name.clone(), cfg.clone()),
-            None => continue,
-        };
-
-        let mcp_access = sess.mcp_access_snapshot();
-        if mcp_access.session_deny_servers.contains(&server_lower) {
-            continue;
-        }
-
-        if mcp_server_allowed_for_turn(&mcp_access, turn_id, &server_lower) {
-            if let Err(err) = sess
-                .mcp_connection_manager
-                .ensure_server_started(&server_name, &cfg)
-                .await
-            {
-                let event = sess.make_event(
-                    turn_id,
-                    EventMsg::Warning(crate::protocol::WarningEvent {
-                        message: format!(
-                            "Failed to start MCP server `{server_name}` required by skills: {err:#}"
-                        ),
-                    }),
-                );
-                sess.send_event(event).await;
-            }
-            continue;
-        }
-
-        let style_label = mcp_access.style_label.clone();
-        let skill_list = skills
-            .iter()
-            .map(|name| format!("`{name}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let mut question_text = format!(
-            "{skill_list} require MCP server `{server_name}`, but it is blocked by your current MCP filters."
-        );
-        if let Some(style_label) = style_label.as_deref() {
-            question_text.push_str(&format!(" Active shell style: `{style_label}`."));
-        }
-        question_text.push_str("\n\nHow do you want to proceed?");
-
-        let mut options: Vec<RequestUserInputQuestionOption> = Vec::new();
-        options.push(RequestUserInputQuestionOption {
-            label: "Allow once".to_string(),
-            description: "Enable this server for the current turn only.".to_string(),
-        });
-        options.push(RequestUserInputQuestionOption {
-            label: "Allow for session".to_string(),
-            description: "Enable this server until you restart the app.".to_string(),
-        });
-        if mcp_access.style.is_some() {
-            options.push(RequestUserInputQuestionOption {
-                label: "Allow and persist for style".to_string(),
-                description: "Update the active shell style MCP include/exclude filters.".to_string(),
-            });
-        }
-        options.push(RequestUserInputQuestionOption {
-            label: "Deny".to_string(),
-            description: "Keep it blocked for now.".to_string(),
-        });
-        options.push(RequestUserInputQuestionOption {
-            label: "Deny for session (don't ask again)".to_string(),
-            description: "Keep it blocked for this session and skip future prompts.".to_string(),
-        });
-        if mcp_access.style.is_some() {
-            options.push(RequestUserInputQuestionOption {
-                label: "Deny and persist for style".to_string(),
-                description: "Add this server to the active shell style MCP exclude list.".to_string(),
-            });
-        }
-        options.push(RequestUserInputQuestionOption {
-            label: "Cancel".to_string(),
-            description: "Abort this prompt without changing settings.".to_string(),
-        });
-
-        let call_id = format!("mcp_access:{turn_id}:{server_lower}");
-        let rx_response = match sess.register_pending_user_input(turn_id.to_string()) {
-            Ok(rx) => rx,
-            Err(err) => {
-                let event = sess.make_event(
-                    turn_id,
-                    EventMsg::Warning(crate::protocol::WarningEvent { message: err }),
-                );
-                sess.send_event(event).await;
-                continue;
-            }
-        };
-
-        sess.send_event(sess.make_event(
-            turn_id,
-            EventMsg::RequestUserInput(RequestUserInputEvent {
-                call_id: call_id.clone(),
-                turn_id: turn_id.to_string(),
-                questions: vec![RequestUserInputQuestion {
-                    id: "mcp_access".to_string(),
-                    header: "MCP access".to_string(),
-                    question: question_text,
-                    is_other: false,
-                    is_secret: false,
-                    options: Some(options),
-                }],
-            }),
-        ))
-        .await;
-
-        let response = match rx_response.await {
-            Ok(response) => response,
-            Err(_) => continue,
-        };
-        let selection = response
-            .answers
-            .get("mcp_access")
-            .and_then(|answer| answer.answers.first())
-            .map(|value| value.trim().to_string())
-            .unwrap_or_default();
-
-        match selection.as_str() {
-            "Allow once" => {
-                sess.allow_mcp_server_for_turn(turn_id, &server_lower);
-            }
-            "Allow for session" => {
-                sess.allow_mcp_server_for_session(&server_lower);
-            }
-            "Allow and persist for style" => {
-                let Some(style) = mcp_access.style else {
-                    continue;
-                };
-                let mut include = mcp_access.style_include_servers.clone();
-                let mut exclude = mcp_access.style_exclude_servers.clone();
-                exclude.remove(&server_lower);
-                if !include.is_empty() {
-                    include.insert(server_lower.clone());
-                }
-
-                sess.set_mcp_style_filters(
-                    Some(style),
-                    mcp_access.style_label.clone(),
-                    include.clone(),
-                    exclude.clone(),
-                );
-
-                let mut include_vec: Vec<String> = include.iter().cloned().collect();
-                let mut exclude_vec: Vec<String> = exclude.iter().cloned().collect();
-                include_vec.sort();
-                exclude_vec.sort();
-
-                let code_home = sess.client.code_home().to_path_buf();
-                let persisted = tokio::task::spawn_blocking(move || {
-                    crate::config::set_shell_style_profile_mcp_servers(
-                        &code_home,
-                        style,
-                        include_vec.as_slice(),
-                        exclude_vec.as_slice(),
-                    )
-                })
-                .await;
-
-                match persisted {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => {
-                        let event = sess.make_event(
-                            turn_id,
-                            EventMsg::Warning(crate::protocol::WarningEvent {
-                                message: format!(
-                                    "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                ),
-                            }),
-                        );
-                        sess.send_event(event).await;
-                    }
-                    Err(err) => {
-                        let event = sess.make_event(
-                            turn_id,
-                            EventMsg::Warning(crate::protocol::WarningEvent {
-                                message: format!(
-                                    "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                ),
-                            }),
-                        );
-                        sess.send_event(event).await;
-                    }
-                }
-            }
-            "Deny" | "Cancel" => {}
-            "Deny for session (don't ask again)" => {
-                sess.deny_mcp_server_for_session(&server_lower);
-            }
-            "Deny and persist for style" => {
-                let Some(style) = mcp_access.style else {
-                    continue;
-                };
-                let mut include = mcp_access.style_include_servers.clone();
-                let mut exclude = mcp_access.style_exclude_servers.clone();
-                exclude.insert(server_lower.clone());
-                include.remove(&server_lower);
-
-                sess.set_mcp_style_filters(
-                    Some(style),
-                    mcp_access.style_label.clone(),
-                    include.clone(),
-                    exclude.clone(),
-                );
-
-                let mut include_vec: Vec<String> = include.iter().cloned().collect();
-                let mut exclude_vec: Vec<String> = exclude.iter().cloned().collect();
-                include_vec.sort();
-                exclude_vec.sort();
-
-                let code_home = sess.client.code_home().to_path_buf();
-                let persisted = tokio::task::spawn_blocking(move || {
-                    crate::config::set_shell_style_profile_mcp_servers(
-                        &code_home,
-                        style,
-                        include_vec.as_slice(),
-                        exclude_vec.as_slice(),
-                    )
-                })
-                .await;
-
-                match persisted {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => {
-                        let event = sess.make_event(
-                            turn_id,
-                            EventMsg::Warning(crate::protocol::WarningEvent {
-                                message: format!(
-                                    "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                ),
-                            }),
-                        );
-                        sess.send_event(event).await;
-                    }
-                    Err(err) => {
-                        let event = sess.make_event(
-                            turn_id,
-                            EventMsg::Warning(crate::protocol::WarningEvent {
-                                message: format!(
-                                    "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                ),
-                            }),
-                        );
-                        sess.send_event(event).await;
-                    }
-                }
-            }
-            other => {
-                let event = sess.make_event(
-                    turn_id,
-                    EventMsg::Warning(crate::protocol::WarningEvent {
-                        message: format!(
-                            "Unknown MCP access selection `{other}`; keeping server `{server_name}` blocked."
-                        ),
-                    }),
-                );
-                sess.send_event(event).await;
-            }
-        }
-
-        let mcp_access_after = sess.mcp_access_snapshot();
-        if mcp_server_allowed_for_turn(&mcp_access_after, turn_id, &server_lower) {
-            if let Err(err) = sess
-                .mcp_connection_manager
-                .ensure_server_started(&server_name, &cfg)
-                .await
-            {
-                let event = sess.make_event(
-                    turn_id,
-                    EventMsg::Warning(crate::protocol::WarningEvent {
-                        message: format!(
-                            "Failed to start MCP server `{server_name}` after allowing it: {err:#}"
-                        ),
-                    }),
-                );
-                sess.send_event(event).await;
-            }
-        }
-    }
-}
-
-struct McpTurnAllowGuard {
-    sess: Arc<Session>,
-    turn_id: String,
-}
-
-impl McpTurnAllowGuard {
-    fn new(sess: Arc<Session>, turn_id: String) -> Self {
-        sess.set_mcp_turn_allow_servers(turn_id.as_str(), HashSet::new());
-        Self { sess, turn_id }
-    }
-}
-
-impl Drop for McpTurnAllowGuard {
-    fn drop(&mut self) {
-        self.sess
-            .clear_mcp_turn_allow_servers(self.turn_id.as_str());
-    }
-}
-
 async fn run_turn(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -2867,81 +2469,17 @@ async fn run_turn(
     let mut did_auto_compact = false;
     // Attempt input starts as the provided input, and may be augmented with
     // items from a previous dropped stream attempt so we don't lose progress.
-    let mut mention_messages: Vec<String> = Vec::new();
-    for item in initial_user_item.iter().chain(pending_input_tail.iter()) {
-        if let ResponseItem::Message { role, content, .. } = item
-            && role == "user"
-        {
-            for entry in content {
-                if let ContentItem::InputText { text } = entry {
-                    mention_messages.push(text.clone());
-                }
-            }
-        }
-    }
-    let _mcp_turn_allow_guard = McpTurnAllowGuard::new(Arc::clone(sess), sub_id.clone());
-
-    if !mention_messages.is_empty() {
-        let mention_outcome = {
-            let skills = sess.skills.read().await;
-            if skills.is_empty() {
-                None
-            } else {
-                Some(crate::skills::injection::collect_explicit_skill_mentions(
-                    mention_messages.as_slice(),
-                    skills.as_slice(),
-                ))
-            }
-        };
-
-        if let Some(mention_outcome) = mention_outcome {
-            for warning in mention_outcome.warnings {
-                let event = sess.make_event(
-                    &sub_id,
-                    EventMsg::Warning(crate::protocol::WarningEvent { message: warning }),
-                );
-                sess.send_event(event).await;
-            }
-
-            let injections =
-                crate::skills::injection::build_skill_injections(&mention_outcome.mentioned).await;
-            for warning in injections.warnings {
-                let event = sess.make_event(
-                    &sub_id,
-                    EventMsg::Warning(crate::protocol::WarningEvent { message: warning }),
-                );
-                sess.send_event(event).await;
-            }
-
-            let config_snapshot = tc.client.config();
-            ensure_skill_mcp_access_for_turn(
-                sess,
-                sub_id.as_str(),
-                config_snapshot.as_ref(),
-                injections.mcp_dependencies.as_slice(),
-            )
-            .await;
-
-            let mcp_access = sess.mcp_access_snapshot();
-            for warning in crate::mcp::skill_dependencies::build_skill_mcp_dependency_warnings(
-                injections.mcp_dependencies.as_slice(),
-                &sess.mcp_connection_manager,
-                mcp_access.style_label.as_deref(),
-                &mcp_access.style_include_servers,
-                &mcp_access.style_exclude_servers,
-            ) {
-                let event = sess.make_event(
-                    &sub_id,
-                    EventMsg::Warning(crate::protocol::WarningEvent { message: warning }),
-                );
-                sess.send_event(event).await;
-            }
-
-            if !injections.items.is_empty() {
-                input.extend(injections.items);
-            }
-        }
-    }
+    let _mcp_turn_allow_guard =
+        super::mcp_access::McpTurnAllowGuard::new(Arc::clone(sess), sub_id.clone());
+    super::mcp_access::preflight_turn_skill_input(
+        sess,
+        turn_context,
+        sub_id.as_str(),
+        initial_user_item.as_ref(),
+        pending_input_tail.as_slice(),
+        &mut input,
+    )
+    .await;
 
     let mut attempt_input: Vec<ResponseItem> = input.clone();
     loop {
@@ -3010,7 +2548,7 @@ async fn run_turn(
             effective_family,
         );
         let mcp_access = sess.mcp_access_snapshot();
-        let mcp_tools = filter_mcp_tools_for_turn(
+        let mcp_tools = crate::mcp::policy::filter_tools_for_turn(
             &sess.mcp_connection_manager,
             &mcp_access,
             sub_id.as_str(),
@@ -3081,14 +2619,20 @@ async fn run_turn(
                                 .map(|current| current.mode)
                                 .unwrap_or(AppAuthMode::ApiKey);
                             match crate::account_switching::switch_active_account_on_rate_limit(
-                                sess.client.code_home(),
-                                sess.client.auth_credentials_store_mode(),
-                                &mut rate_limit_switch_state,
-                                sess.client.api_key_fallback_on_all_accounts_limited(),
-                                now,
-                                current_account_id.as_str(),
-                                current_auth_mode,
-                                blocked_until,
+                                crate::account_switching::SwitchActiveAccountOnRateLimitParams {
+                                    code_home: sess.client.code_home(),
+                                    auth_credentials_store_mode: sess
+                                        .client
+                                        .auth_credentials_store_mode(),
+                                    state: &mut rate_limit_switch_state,
+                                    allow_api_key_fallback: sess
+                                        .client
+                                        .api_key_fallback_on_all_accounts_limited(),
+                                    now,
+                                    current_account_id: current_account_id.as_str(),
+                                    current_mode: current_auth_mode,
+                                    blocked_until,
+                                },
                             ) {
                                 Ok(Some(next_account_id)) => {
                                     let next_label = auth_accounts::find_account(
@@ -4166,12 +3710,27 @@ async fn handle_function_call(
             }
             match sess.mcp_connection_manager.parse_tool_name(&name) {
                 Some((server, tool_name)) => {
-                    let server_lower = server.trim().to_ascii_lowercase();
+                    let Some(server_id) = crate::mcp::ids::McpServerId::parse(server.as_str()) else {
+                        return ResponseInputItem::FunctionCallOutput {
+                            call_id,
+                            output: FunctionCallOutputPayload {
+                                body: FunctionCallOutputBody::Text(format!(
+                                    "unsupported MCP server name `{server}`"
+                                )),
+                                success: Some(false),
+                            },
+                        };
+                    };
                     let mcp_access = sess.mcp_access_snapshot();
-                    let mut allow = mcp_server_allowed_for_turn(&mcp_access, &ctx.sub_id, &server_lower);
+                    let mut access = crate::mcp::policy::server_access_for_turn(
+                        &mcp_access,
+                        &ctx.sub_id,
+                        &server_id,
+                    );
+                    let mut allow = access.is_allowed();
 
-                    if !allow && !server_lower.is_empty() {
-                        if mcp_access.session_deny_servers.contains(&server_lower) {
+                    if !allow {
+                        if access.is_session_denied() {
                             return ResponseInputItem::FunctionCallOutput {
                                 call_id,
                                 output: FunctionCallOutputPayload {
@@ -4184,8 +3743,6 @@ async fn handle_function_call(
                         }
 
                         use code_protocol::request_user_input::RequestUserInputEvent;
-                        use code_protocol::request_user_input::RequestUserInputQuestion;
-                        use code_protocol::request_user_input::RequestUserInputQuestionOption;
 
                         let style_label = mcp_access.style_label.as_deref().unwrap_or("none");
                         let mut question_text = format!(
@@ -4196,41 +3753,8 @@ async fn handle_function_call(
                         }
                         question_text.push_str("\n\nHow do you want to proceed?");
 
-                        let mut options: Vec<RequestUserInputQuestionOption> = Vec::new();
-                        options.push(RequestUserInputQuestionOption {
-                            label: "Allow once".to_string(),
-                            description: "Allow this server for the current turn only.".to_string(),
-                        });
-                        options.push(RequestUserInputQuestionOption {
-                            label: "Allow for session".to_string(),
-                            description: "Allow this server until you restart the app.".to_string(),
-                        });
-                        if mcp_access.style.is_some() {
-                            options.push(RequestUserInputQuestionOption {
-                                label: "Allow and persist for style".to_string(),
-                                description: "Update the active shell style MCP include/exclude filters.".to_string(),
-                            });
-                        }
-                        options.push(RequestUserInputQuestionOption {
-                            label: "Deny".to_string(),
-                            description: "Keep it blocked for now.".to_string(),
-                        });
-                        options.push(RequestUserInputQuestionOption {
-                            label: "Deny for session (don't ask again)".to_string(),
-                            description: "Keep it blocked for this session and skip future prompts.".to_string(),
-                        });
-                        if mcp_access.style.is_some() {
-                            options.push(RequestUserInputQuestionOption {
-                                label: "Deny and persist for style".to_string(),
-                                description: "Add this server to the active shell style MCP exclude list.".to_string(),
-                            });
-                        }
-                        options.push(RequestUserInputQuestionOption {
-                            label: "Cancel".to_string(),
-                            description: "Abort this prompt without changing settings.".to_string(),
-                        });
-
-                        let prompt_call_id = format!("mcp_access:{}:{server_lower}:{tool_name}", ctx.sub_id);
+                        let prompt_call_id =
+                            format!("mcp_access:{}:{}:{tool_name}", ctx.sub_id, server_id.as_str());
                         let rx_response = match sess.register_pending_user_input(ctx.sub_id.clone()) {
                             Ok(rx) => rx,
                             Err(err) => {
@@ -4249,14 +3773,10 @@ async fn handle_function_call(
                             EventMsg::RequestUserInput(RequestUserInputEvent {
                                 call_id: prompt_call_id,
                                 turn_id: ctx.sub_id.clone(),
-                                questions: vec![RequestUserInputQuestion {
-                                    id: "mcp_access".to_string(),
-                                    header: "MCP access".to_string(),
-                                    question: question_text,
-                                    is_other: false,
-                                    is_secret: false,
-                                    options: Some(options),
-                                }],
+                                questions: vec![super::mcp_access::mcp_access_question(
+                                    question_text,
+                                    mcp_access.style.is_some(),
+                                )],
                             }),
                         )
                         .await;
@@ -4283,152 +3803,23 @@ async fn handle_function_call(
                             .map(|value| value.trim().to_string())
                             .unwrap_or_default();
 
-                        match selection.as_str() {
-                            "Allow once" => {
-                                sess.allow_mcp_server_for_turn(&ctx.sub_id, &server_lower);
-                            }
-                            "Allow for session" => {
-                                sess.allow_mcp_server_for_session(&server_lower);
-                            }
-                            "Allow and persist for style" => {
-                                if let Some(style) = mcp_access.style {
-                                    let mut include = mcp_access.style_include_servers.clone();
-                                    let mut exclude = mcp_access.style_exclude_servers.clone();
-                                    exclude.remove(&server_lower);
-                                    if !include.is_empty() {
-                                        include.insert(server_lower.clone());
-                                    }
-
-                                    sess.set_mcp_style_filters(
-                                        Some(style),
-                                        mcp_access.style_label.clone(),
-                                        include.clone(),
-                                        exclude.clone(),
-                                    );
-
-                                    let mut include_vec: Vec<String> = include.into_iter().collect();
-                                    let mut exclude_vec: Vec<String> = exclude.into_iter().collect();
-                                    include_vec.sort();
-                                    exclude_vec.sort();
-
-                                    let code_home = sess.client.code_home().to_path_buf();
-                                    let persisted = tokio::task::spawn_blocking(move || {
-                                        crate::config::set_shell_style_profile_mcp_servers(
-                                            &code_home,
-                                            style,
-                                            include_vec.as_slice(),
-                                            exclude_vec.as_slice(),
-                                        )
-                                    })
-                                    .await;
-
-                                    match persisted {
-                                        Ok(Ok(_)) => {}
-                                        Ok(Err(err)) => {
-                                            let event = sess.make_event(
-                                                &ctx.sub_id,
-                                                EventMsg::Warning(crate::protocol::WarningEvent {
-                                                    message: format!(
-                                                        "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                                    ),
-                                                }),
-                                            );
-                                            sess.send_event(event).await;
-                                        }
-                                        Err(err) => {
-                                            let event = sess.make_event(
-                                                &ctx.sub_id,
-                                                EventMsg::Warning(crate::protocol::WarningEvent {
-                                                    message: format!(
-                                                        "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                                    ),
-                                                }),
-                                            );
-                                            sess.send_event(event).await;
-                                        }
-                                    }
-                                }
-                            }
-                            "Deny for session (don't ask again)" => {
-                                sess.deny_mcp_server_for_session(&server_lower);
-                            }
-                            "Deny and persist for style" => {
-                                if let Some(style) = mcp_access.style {
-                                    let mut include = mcp_access.style_include_servers.clone();
-                                    let mut exclude = mcp_access.style_exclude_servers.clone();
-                                    exclude.insert(server_lower.clone());
-                                    include.remove(&server_lower);
-
-                                    sess.set_mcp_style_filters(
-                                        Some(style),
-                                        mcp_access.style_label.clone(),
-                                        include.clone(),
-                                        exclude.clone(),
-                                    );
-
-                                    let mut include_vec: Vec<String> = include.into_iter().collect();
-                                    let mut exclude_vec: Vec<String> = exclude.into_iter().collect();
-                                    include_vec.sort();
-                                    exclude_vec.sort();
-
-                                    let code_home = sess.client.code_home().to_path_buf();
-                                    let persisted = tokio::task::spawn_blocking(move || {
-                                        crate::config::set_shell_style_profile_mcp_servers(
-                                            &code_home,
-                                            style,
-                                            include_vec.as_slice(),
-                                            exclude_vec.as_slice(),
-                                        )
-                                    })
-                                    .await;
-
-                                    match persisted {
-                                        Ok(Ok(_)) => {}
-                                        Ok(Err(err)) => {
-                                            let event = sess.make_event(
-                                                &ctx.sub_id,
-                                                EventMsg::Warning(crate::protocol::WarningEvent {
-                                                    message: format!(
-                                                        "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                                    ),
-                                                }),
-                                            );
-                                            sess.send_event(event).await;
-                                        }
-                                        Err(err) => {
-                                            let event = sess.make_event(
-                                                &ctx.sub_id,
-                                                EventMsg::Warning(crate::protocol::WarningEvent {
-                                                    message: format!(
-                                                        "Failed to persist MCP style filters for `{style}`: {err:#}"
-                                                    ),
-                                                }),
-                                            );
-                                            sess.send_event(event).await;
-                                        }
-                                    }
-                                }
-                            }
-                            "Deny" | "Cancel" => {}
-                            other => {
-                                let event = sess.make_event(
-                                    &ctx.sub_id,
-                                    EventMsg::Warning(crate::protocol::WarningEvent {
-                                        message: format!(
-                                            "Unknown MCP access selection `{other}`; keeping server `{server}` blocked."
-                                        ),
-                                    }),
-                                );
-                                sess.send_event(event).await;
-                            }
-                        }
+                        super::mcp_access::apply_mcp_access_selection(
+                            sess,
+                            &ctx.sub_id,
+                            &server_id,
+                            server.as_str(),
+                            &mcp_access,
+                            selection.as_str(),
+                        )
+                        .await;
 
                         let mcp_access_after = sess.mcp_access_snapshot();
-                        allow = mcp_server_allowed_for_turn(
+                        access = crate::mcp::policy::server_access_for_turn(
                             &mcp_access_after,
                             &ctx.sub_id,
-                            &server_lower,
+                            &server_id,
                         );
+                        allow = access.is_allowed();
                     }
 
                     if !allow {

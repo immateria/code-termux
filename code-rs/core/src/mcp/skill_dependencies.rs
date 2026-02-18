@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::mcp::ids::McpServerId;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::protocol::McpServerFailure;
 use crate::protocol::McpServerFailurePhase;
@@ -29,12 +30,11 @@ pub(crate) fn build_skill_mcp_dependency_warnings(
         disabled_tool_names_by_server_lower,
     } = build_server_maps(&tools_by_server, &disabled_by_server, &failures);
 
-    let mut grouped: BTreeMap<(String, Option<String>), BTreeSet<String>> = BTreeMap::new();
+    let mut grouped: BTreeMap<(McpServerId, Option<String>), BTreeSet<String>> = BTreeMap::new();
     for dep in deps {
-        let server = dep.server.trim().to_ascii_lowercase();
-        if server.is_empty() {
+        let Some(server) = McpServerId::parse(dep.server.as_str()) else {
             continue;
-        }
+        };
         let tool = dep
             .tool
             .as_deref()
@@ -48,12 +48,12 @@ pub(crate) fn build_skill_mcp_dependency_warnings(
     }
 
     let mut warnings = Vec::new();
-    for ((server_lower, tool_lower), skills) in grouped {
+    for ((server_id, tool_lower), skills) in grouped {
         let skill_list = format_skill_list(&skills);
-        let Some(server_name) = server_name_by_lower.get(&server_lower) else {
+        let Some(server_name) = server_name_by_lower.get(&server_id) else {
             warnings.push(missing_server_warning(
                 &skill_list,
-                server_lower.as_str(),
+                server_id.as_str(),
                 style_label,
                 include_servers,
                 exclude_servers,
@@ -69,7 +69,7 @@ pub(crate) fn build_skill_mcp_dependency_warnings(
             }
             Some(tool_lower) => {
                 if disabled_tool_names_by_server_lower
-                    .get(&server_lower)
+                    .get(&server_id)
                     .is_some_and(|disabled| disabled.contains(tool_lower))
                 {
                     warnings.push(disabled_tool_warning(
@@ -81,7 +81,7 @@ pub(crate) fn build_skill_mcp_dependency_warnings(
                 }
 
                 if tool_names_by_server_lower
-                    .get(&server_lower)
+                    .get(&server_id)
                     .is_some_and(|tools| tools.contains(tool_lower))
                 {
                     continue;
@@ -105,9 +105,9 @@ pub(crate) fn build_skill_mcp_dependency_warnings(
 }
 
 struct ServerMaps {
-    server_name_by_lower: HashMap<String, String>,
-    tool_names_by_server_lower: HashMap<String, HashSet<String>>,
-    disabled_tool_names_by_server_lower: HashMap<String, HashSet<String>>,
+    server_name_by_lower: HashMap<McpServerId, String>,
+    tool_names_by_server_lower: HashMap<McpServerId, HashSet<String>>,
+    disabled_tool_names_by_server_lower: HashMap<McpServerId, HashSet<String>>,
 }
 
 fn build_server_maps(
@@ -115,25 +115,33 @@ fn build_server_maps(
     disabled_by_server: &HashMap<String, Vec<String>>,
     failures: &HashMap<String, McpServerFailure>,
 ) -> ServerMaps {
-    let mut server_name_by_lower: HashMap<String, String> = HashMap::new();
+    let mut server_name_by_lower: HashMap<McpServerId, String> = HashMap::new();
     for name in tools_by_server.keys().chain(failures.keys()) {
+        let Some(server_id) = McpServerId::parse(name) else {
+            continue;
+        };
         server_name_by_lower
-            .entry(name.to_ascii_lowercase())
+            .entry(server_id)
             .or_insert_with(|| name.clone());
     }
 
-    let mut tool_names_by_server_lower: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut tool_names_by_server_lower: HashMap<McpServerId, HashSet<String>> = HashMap::new();
     for (server, tools) in tools_by_server {
-        let key = server.to_ascii_lowercase();
+        let Some(key) = McpServerId::parse(server) else {
+            continue;
+        };
         let set = tool_names_by_server_lower.entry(key).or_default();
         for tool in tools {
             set.insert(tool.trim().to_ascii_lowercase());
         }
     }
 
-    let mut disabled_tool_names_by_server_lower: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut disabled_tool_names_by_server_lower: HashMap<McpServerId, HashSet<String>> =
+        HashMap::new();
     for (server, tools) in disabled_by_server {
-        let key = server.to_ascii_lowercase();
+        let Some(key) = McpServerId::parse(server) else {
+            continue;
+        };
         let set = disabled_tool_names_by_server_lower.entry(key).or_default();
         for tool in tools {
             set.insert(tool.trim().to_ascii_lowercase());

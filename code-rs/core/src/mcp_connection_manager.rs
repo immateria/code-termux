@@ -177,6 +177,18 @@ enum McpClientAdapter {
     Rmcp(Arc<RmcpClient>),
 }
 
+struct StreamableHttpClientArgs<'a> {
+    code_home: PathBuf,
+    server_name: &'a str,
+    url: String,
+    bearer_token: Option<String>,
+    http_headers: Option<HashMap<String, String>>,
+    env_http_headers: Option<HashMap<String, String>>,
+    oauth_store_mode: OAuthCredentialsStoreMode,
+    params: mcp_types::InitializeRequestParams,
+    startup_timeout: Duration,
+}
+
 impl McpClientAdapter {
     async fn new_stdio_client(
         program: OsString,
@@ -193,17 +205,18 @@ impl McpClientAdapter {
         Ok(McpClientAdapter::Rmcp(client))
     }
 
-    async fn new_streamable_http_client(
-        code_home: PathBuf,
-        server_name: &str,
-        url: String,
-        bearer_token: Option<String>,
-        http_headers: Option<HashMap<String, String>>,
-        env_http_headers: Option<HashMap<String, String>>,
-        oauth_store_mode: OAuthCredentialsStoreMode,
-        params: mcp_types::InitializeRequestParams,
-        startup_timeout: Duration,
-    ) -> Result<Self> {
+    async fn new_streamable_http_client(args: StreamableHttpClientArgs<'_>) -> Result<Self> {
+        let StreamableHttpClientArgs {
+            code_home,
+            server_name,
+            url,
+            bearer_token,
+            http_headers,
+            env_http_headers,
+            oauth_store_mode,
+            params,
+            startup_timeout,
+        } = args;
         let client = Arc::new(
             RmcpClient::new_streamable_http_client(
                 code_home,
@@ -391,9 +404,9 @@ impl McpConnectionManager {
                             bearer_token_env_var.as_deref(),
                         ) {
                             Ok(bearer_token) => {
-                                McpClientAdapter::new_streamable_http_client(
-                                    code_home_for_server,
-                                    &server_name_for_error,
+                                McpClientAdapter::new_streamable_http_client(StreamableHttpClientArgs {
+                                    code_home: code_home_for_server,
+                                    server_name: &server_name_for_error,
                                     url,
                                     bearer_token,
                                     http_headers,
@@ -401,7 +414,7 @@ impl McpConnectionManager {
                                     oauth_store_mode,
                                     params,
                                     startup_timeout,
-                                )
+                                })
                                 .await
                             }
                             Err(err) => Err(err),
@@ -654,15 +667,13 @@ impl McpConnectionManager {
         let store_mode = self.mcp_oauth_credentials_store_mode;
         let code_home = self.code_home.clone();
 
-        let transports: Vec<(String, McpServerTransportConfig)> = self
-            .server_transports_read()
-            .iter()
-            .map(|(server_name, transport)| (server_name.clone(), transport.clone()))
-            .collect();
-
-        let futures = transports.into_iter().map(|(server_name, transport)| {
-            let code_home = code_home.clone();
-            async move {
+        let join = {
+            let transports = self.server_transports_read();
+            join_all(transports.iter().map(|(server_name, transport)| {
+                let code_home = code_home.clone();
+                let server_name = server_name.clone();
+                let transport = transport.clone();
+                async move {
                 let status = match transport {
                     McpServerTransportConfig::Stdio { .. } => McpAuthStatus::Unsupported,
                     McpServerTransportConfig::StreamableHttp {
@@ -693,10 +704,11 @@ impl McpConnectionManager {
                     },
                 };
                 (server_name, status)
-            }
-        });
+                }
+            }))
+        };
 
-        join_all(futures).await.into_iter().collect()
+        join.await.into_iter().collect()
     }
 
     /// Start an MCP server on-demand when it is needed for the current session.
@@ -774,7 +786,7 @@ impl McpConnectionManager {
                     bearer_token,
                     bearer_token_env_var.as_deref(),
                 )?;
-                McpClientAdapter::new_streamable_http_client(
+                McpClientAdapter::new_streamable_http_client(StreamableHttpClientArgs {
                     code_home,
                     server_name,
                     url,
@@ -784,7 +796,7 @@ impl McpConnectionManager {
                     oauth_store_mode,
                     params,
                     startup_timeout,
-                )
+                })
                 .await?
             }
         };

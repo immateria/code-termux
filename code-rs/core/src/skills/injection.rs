@@ -7,6 +7,8 @@ use serde::Deserialize;
 use tokio::fs;
 
 use crate::mentions;
+use crate::mcp::ids::McpServerId;
+use crate::mcp::ids::McpToolId;
 use crate::skills::frontmatter::extract_frontmatter;
 use crate::skills::model::SkillMetadata;
 use crate::user_instructions::SkillInstructions;
@@ -92,7 +94,7 @@ pub(crate) fn collect_explicit_skill_mentions(
         .plain_names
         .iter()
         .copied()
-        .map(|name| name.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
         .collect();
 
     if mention_plain_names_lower.is_empty() {
@@ -221,13 +223,13 @@ fn parse_skill_mcp_dependencies(
     let mut out: Vec<SkillMcpDependency> = Vec::new();
 
     for server in parsed.mcp_servers {
-        let Some(server) = normalize_mcp_identifier(server.as_str()) else {
+        let Some(server) = McpServerId::parse(server.as_str()) else {
             continue;
         };
-        if dedupe.insert((server.clone(), None)) {
+        if dedupe.insert((server.as_str().to_string(), None)) {
             out.push(SkillMcpDependency {
                 skill_name: skill_name.to_string(),
-                server,
+                server: server.as_str().to_string(),
                 tool: None,
             });
         }
@@ -235,8 +237,8 @@ fn parse_skill_mcp_dependencies(
 
     for entry in parsed.mcp_tools {
         let (server, tool) = match entry {
-            McpToolDepSpec::String(spec) => match parse_mcp_tool_spec(spec.as_str()) {
-                Some(pair) => pair,
+            McpToolDepSpec::String(spec) => match McpToolId::parse_spec(spec.as_str()) {
+                Some(pair) => pair.into_parts(),
                 None => {
                     return Err(format!(
                         "invalid mcp_tools entry `{spec}` (expected `server/tool` or `server::tool`)",
@@ -244,11 +246,11 @@ fn parse_skill_mcp_dependencies(
                 }
             },
             McpToolDepSpec::Map { server, tool } => {
-                let server = normalize_mcp_identifier(server.as_str())
+                let server = McpServerId::parse(server.as_str())
                     .ok_or_else(|| "mcp_tools.server cannot be empty".to_string())?;
-                let tool = normalize_mcp_identifier(tool.as_str())
-                    .ok_or_else(|| "mcp_tools.tool cannot be empty".to_string())?;
-                (server, tool)
+                McpToolId::parse(server.as_str(), tool.as_str())
+                    .ok_or_else(|| "mcp_tools.tool cannot be empty".to_string())?
+                    .into_parts()
             }
         };
 
@@ -262,32 +264,6 @@ fn parse_skill_mcp_dependencies(
     }
 
     Ok(out)
-}
-
-fn normalize_mcp_identifier(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_ascii_lowercase())
-}
-
-fn parse_mcp_tool_spec(spec: &str) -> Option<(String, String)> {
-    let mut trimmed = spec.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("mcp://") {
-        trimmed = rest;
-    }
-
-    let (server, tool) = if let Some((server, tool)) = trimmed.split_once("::") {
-        (server, tool)
-    } else {
-        trimmed.split_once('/')?
-    };
-
-    let server = normalize_mcp_identifier(server)?;
-    let tool = normalize_mcp_identifier(tool)?;
-    Some((server, tool))
 }
 
 fn normalize_skill_path(path: &str) -> &str {

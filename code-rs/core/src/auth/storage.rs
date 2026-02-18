@@ -437,15 +437,14 @@ mod tests {
         let key = compute_store_key(code_home.path());
         mock_keyring.set_error(
             &key,
-            KeyringError::NoStorageAccess(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            KeyringError::NoStorageAccess(Box::new(std::io::Error::other(
                 "keyring unavailable",
             ))),
         );
 
         let storage: Arc<dyn AuthStorageBackend> = Arc::new(AutoAuthStorage::new(
             code_home.path().to_path_buf(),
-            Arc::new(mock_keyring.clone()),
+            Arc::new(mock_keyring),
         ));
 
         let expected = auth_with_prefix("file");

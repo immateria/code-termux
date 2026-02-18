@@ -198,15 +198,19 @@ pub(crate) fn select_next_account_id(
 }
 
 pub fn switch_active_account_on_rate_limit(
-    code_home: &Path,
-    auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
-    state: &mut RateLimitSwitchState,
-    allow_api_key_fallback: bool,
-    now: DateTime<Utc>,
-    current_account_id: &str,
-    current_mode: AuthMode,
-    blocked_until: Option<DateTime<Utc>>,
+    params: SwitchActiveAccountOnRateLimitParams<'_>,
 ) -> io::Result<Option<String>> {
+    let SwitchActiveAccountOnRateLimitParams {
+        code_home,
+        auth_credentials_store_mode,
+        state,
+        allow_api_key_fallback,
+        now,
+        current_account_id,
+        current_mode,
+        blocked_until,
+    } = params;
+
     state.mark_limited(current_account_id, current_mode, blocked_until);
 
     let next_account_id = select_next_account_id(
@@ -218,10 +222,25 @@ pub fn switch_active_account_on_rate_limit(
     )?;
 
     if let Some(next_account_id) = next_account_id.as_deref() {
-        auth::activate_account_with_store_mode(code_home, next_account_id, auth_credentials_store_mode)?;
+        auth::activate_account_with_store_mode(
+            code_home,
+            next_account_id,
+            auth_credentials_store_mode,
+        )?;
     }
 
     Ok(next_account_id)
+}
+
+pub struct SwitchActiveAccountOnRateLimitParams<'a> {
+    pub code_home: &'a Path,
+    pub auth_credentials_store_mode: auth::AuthCredentialsStoreMode,
+    pub state: &'a mut RateLimitSwitchState,
+    pub allow_api_key_fallback: bool,
+    pub now: DateTime<Utc>,
+    pub current_account_id: &'a str,
+    pub current_mode: AuthMode,
+    pub blocked_until: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]
@@ -443,16 +462,16 @@ mod tests {
 
         let mut state = RateLimitSwitchState::default();
         let now = fixed_now();
-        let next = switch_active_account_on_rate_limit(
-            home.path(),
-            auth::AuthCredentialsStoreMode::File,
-            &mut state,
-            false,
+        let next = switch_active_account_on_rate_limit(SwitchActiveAccountOnRateLimitParams {
+            code_home: home.path(),
+            auth_credentials_store_mode: auth::AuthCredentialsStoreMode::File,
+            state: &mut state,
+            allow_api_key_fallback: false,
             now,
-            a.id.as_str(),
-            AuthMode::ChatGPT,
-            None,
-        )
+            current_account_id: a.id.as_str(),
+            current_mode: AuthMode::ChatGPT,
+            blocked_until: None,
+        })
         .expect("switch");
 
         assert_eq!(next.as_deref(), Some(b.id.as_str()));

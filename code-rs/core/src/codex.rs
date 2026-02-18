@@ -90,10 +90,12 @@ pub mod compact;
 pub mod compact_remote;
 mod events;
 mod exec;
+mod mcp_access;
 mod session;
 mod streaming;
 
 pub use session::ApprovedCommandPattern;
+pub(crate) use session::McpAccessState;
 pub(crate) use session::{Session, ToolCallCtx};
 use self::compact::{build_compacted_history, collect_compaction_snippets};
 use self::compact_remote::run_inline_remote_auto_compact_task;
@@ -829,103 +831,7 @@ fn should_include_browser_screenshot(
         true
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::codex::streaming::{process_rollout_env_item, TimelineReplayContext};
-    use code_protocol::models::ContentItem;
-    use pretty_assertions::assert_eq;
 
-    #[test]
-    fn screenshot_dedup_tracks_changes() {
-        let mut last = None;
-        let path = PathBuf::from("/tmp/a.png");
-        let hash_one = (vec![0xAAu8; 32], vec![0x55u8; 32]);
-        let hash_two = (vec![0xABu8; 32], vec![0x56u8; 32]);
-
-        assert!(should_include_browser_screenshot(&mut last, &path, Some(hash_one.clone())));
-        assert!(!should_include_browser_screenshot(&mut last, &path, Some(hash_one.clone())));
-        assert!(should_include_browser_screenshot(&mut last, &path, Some(hash_two)));
-    }
-
-    fn make_snapshot(cwd: &str) -> EnvironmentContextSnapshot {
-        EnvironmentContextSnapshot {
-            version: EnvironmentContextSnapshot::VERSION,
-            cwd: Some(cwd.to_string()),
-            approval_policy: None,
-            sandbox_mode: None,
-            network_access: None,
-            writable_roots: Vec::new(),
-            operating_system: None,
-            common_tools: Vec::new(),
-            shell: None,
-            git_branch: Some("main".to_string()),
-            reasoning_effort: None,
-        }
-    }
-
-    #[test]
-    fn timeline_rehydrate_round_trip() {
-        let baseline = make_snapshot("/repo");
-        let delta_snapshot = make_snapshot("/repo-updated");
-        let delta = delta_snapshot.diff_from(&baseline);
-
-        let baseline_item = baseline
-            .to_response_item()
-            .expect("serialize baseline snapshot");
-        let delta_item = delta
-            .to_response_item()
-            .expect("serialize delta snapshot");
-
-        let mut ctx = TimelineReplayContext::default();
-        process_rollout_env_item(&mut ctx, &baseline_item);
-        process_rollout_env_item(&mut ctx, &delta_item);
-
-        assert!(ctx.timeline.baseline().is_some());
-        assert_eq!(ctx.timeline.delta_count(), 1);
-        assert_eq!(ctx.next_sequence, 2);
-        assert!(ctx.last_snapshot.is_some());
-    }
-
-    #[test]
-    fn timeline_rehydrate_legacy_baseline() {
-        let legacy_item = ResponseItem::Message {
-            id: None,
-            role: "user".to_string(),
-            content: vec![ContentItem::InputText {
-                text: "== System Status ==\n cwd: /legacy\n branch: main".to_string(),
-            }], end_turn: None, phase: None};
-
-        let mut ctx = TimelineReplayContext::default();
-        process_rollout_env_item(&mut ctx, &legacy_item);
-
-        assert!(ctx.timeline.is_empty());
-        assert!(ctx.legacy_baseline.is_some());
-    }
-
-    #[test]
-    fn timeline_rehydrate_delta_gap_triggers_reset() {
-        let baseline = make_snapshot("/repo");
-        let baseline_item = baseline
-            .to_response_item()
-            .expect("serialize baseline snapshot");
-
-        let mut ctx = TimelineReplayContext::default();
-        process_rollout_env_item(&mut ctx, &baseline_item);
-
-        let mut delta = make_snapshot("/other").diff_from(&baseline);
-        delta.base_fingerprint = "mismatch".to_string();
-        let delta_item = delta
-            .to_response_item()
-            .expect("serialize delta snapshot");
-
-        process_rollout_env_item(&mut ctx, &delta_item);
-
-        assert!(ctx.timeline.is_empty());
-        assert!(ctx.last_snapshot.is_none());
-        assert_eq!(ctx.next_sequence, 1);
-    }
-}
 use crate::agent_tool::AGENT_MANAGER;
 use crate::agent_tool::AgentStatus;
 use crate::agent_tool::AgentToolRequest;
@@ -1189,5 +1095,106 @@ impl Codex {
             .await
             .map_err(|_| CodexErr::InternalAgentDied)?;
         Ok(event)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codex::streaming::{process_rollout_env_item, TimelineReplayContext};
+    use code_protocol::models::ContentItem;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn screenshot_dedup_tracks_changes() {
+        let mut last = None;
+        let path = PathBuf::from("/tmp/a.png");
+        let hash_one = (vec![0xAAu8; 32], vec![0x55u8; 32]);
+        let hash_two = (vec![0xABu8; 32], vec![0x56u8; 32]);
+
+        assert!(should_include_browser_screenshot(&mut last, &path, Some(hash_one.clone())));
+        assert!(!should_include_browser_screenshot(&mut last, &path, Some(hash_one)));
+        assert!(should_include_browser_screenshot(&mut last, &path, Some(hash_two)));
+    }
+
+    fn make_snapshot(cwd: &str) -> EnvironmentContextSnapshot {
+        EnvironmentContextSnapshot {
+            version: EnvironmentContextSnapshot::VERSION,
+            cwd: Some(cwd.to_string()),
+            approval_policy: None,
+            sandbox_mode: None,
+            network_access: None,
+            writable_roots: Vec::new(),
+            operating_system: None,
+            common_tools: Vec::new(),
+            shell: None,
+            git_branch: Some("main".to_string()),
+            reasoning_effort: None,
+        }
+    }
+
+    #[test]
+    fn timeline_rehydrate_round_trip() {
+        let baseline = make_snapshot("/repo");
+        let delta_snapshot = make_snapshot("/repo-updated");
+        let delta = delta_snapshot.diff_from(&baseline);
+
+        let baseline_item = baseline
+            .to_response_item()
+            .expect("serialize baseline snapshot");
+        let delta_item = delta
+            .to_response_item()
+            .expect("serialize delta snapshot");
+
+        let mut ctx = TimelineReplayContext::default();
+        process_rollout_env_item(&mut ctx, &baseline_item);
+        process_rollout_env_item(&mut ctx, &delta_item);
+
+        assert!(ctx.timeline.baseline().is_some());
+        assert_eq!(ctx.timeline.delta_count(), 1);
+        assert_eq!(ctx.next_sequence, 2);
+        assert!(ctx.last_snapshot.is_some());
+    }
+
+    #[test]
+    fn timeline_rehydrate_legacy_baseline() {
+        let legacy_item = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "== System Status ==\n cwd: /legacy\n branch: main".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        };
+
+        let mut ctx = TimelineReplayContext::default();
+        process_rollout_env_item(&mut ctx, &legacy_item);
+
+        assert!(ctx.timeline.is_empty());
+        assert!(ctx.legacy_baseline.is_some());
+    }
+
+    #[test]
+    fn timeline_rehydrate_delta_gap_triggers_reset() {
+        let baseline = make_snapshot("/repo");
+        let baseline_item = baseline
+            .to_response_item()
+            .expect("serialize baseline snapshot");
+
+        let mut ctx = TimelineReplayContext::default();
+        process_rollout_env_item(&mut ctx, &baseline_item);
+
+        let mut delta = make_snapshot("/other").diff_from(&baseline);
+        delta.base_fingerprint = "mismatch".to_string();
+        let delta_item = delta
+            .to_response_item()
+            .expect("serialize delta snapshot");
+
+        process_rollout_env_item(&mut ctx, &delta_item);
+
+        assert!(ctx.timeline.is_empty());
+        assert!(ctx.last_snapshot.is_none());
+        assert_eq!(ctx.next_sequence, 1);
     }
 }

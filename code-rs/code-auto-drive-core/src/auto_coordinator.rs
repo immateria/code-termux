@@ -25,7 +25,9 @@ use code_core::project_doc::read_auto_drive_docs;
 use code_core::protocol::SandboxPolicy;
 use code_core::slash_commands::get_enabled_agents;
 use code_core::{AuthManager, ModelClient, ModelClientInit, Prompt, ResponseEvent, TextFormat};
-use code_core::{RateLimitSwitchState, switch_active_account_on_rate_limit};
+use code_core::{
+    RateLimitSwitchState, SwitchActiveAccountOnRateLimitParams, switch_active_account_on_rate_limit,
+};
 use code_core::auth;
 use code_core::auth_accounts;
 use code_core::error::CodexErr;
@@ -3631,14 +3633,17 @@ fn classify_model_error_with_auto_switch(
                             });
                         if let Some(current_auth_mode) = current_auth_mode {
                             match switch_active_account_on_rate_limit(
-                                client.code_home(),
-                                client.auth_credentials_store_mode(),
-                                state,
-                                client.api_key_fallback_on_all_accounts_limited(),
-                                now,
-                                current_account_id.as_str(),
-                                current_auth_mode,
-                                blocked_until,
+                                SwitchActiveAccountOnRateLimitParams {
+                                    code_home: client.code_home(),
+                                    auth_credentials_store_mode: client.auth_credentials_store_mode(),
+                                    state,
+                                    allow_api_key_fallback: client
+                                        .api_key_fallback_on_all_accounts_limited(),
+                                    now,
+                                    current_account_id: current_account_id.as_str(),
+                                    current_mode: current_auth_mode,
+                                    blocked_until,
+                                },
                             ) {
                                 Ok(Some(next_account_id)) => {
                                     let next_label = auth_accounts::find_account(
